@@ -1,0 +1,8 @@
+services:
+  orderflow-engine:
+    build: .
+    container_name: fxpilot-orderflow-engine
+    env_file:
+      - .env.example
+    ports:
+      - "8010:8010"
