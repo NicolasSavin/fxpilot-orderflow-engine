@@ -25,6 +25,32 @@ class VolumeProfileResult(BaseModel):
     lvn_levels: list[float] = Field(default_factory=list)
 
 
+class CumDeltaPoint(BaseModel):
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    symbol: str
+    delta: float = 0
+    cumdelta: float = 0
+    buy_volume: float = 0
+    sell_volume: float = 0
+    total_volume: float = 0
+    price: float | None = None
+
+
+class CumDeltaResult(BaseModel):
+    symbol: str
+    current_delta: float = 0
+    current_cumdelta: float = 0
+    session_cumdelta: float = 0
+    rolling_cumdelta: float = 0
+    buy_volume: float = 0
+    sell_volume: float = 0
+    total_volume: float = 0
+    delta_slope: Literal["rising", "falling", "flat"] = "flat"
+    delta_momentum: Literal["strengthening", "weakening", "neutral"] = "neutral"
+    divergence: Literal["bullish", "bearish", "none"] = "none"
+    bias: Literal["bullish", "bearish", "neutral"] = "neutral"
+
+
 class OrderFlowSnapshot(BaseModel):
     symbol: str
     futures_symbol: str
