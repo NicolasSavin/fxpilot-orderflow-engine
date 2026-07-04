@@ -42,6 +42,7 @@ class OrderFlowEngine:
             trades = store.trades.get(futures) or await self.provider.get_recent_trades(futures)
             book = store.books.get(futures) or await self.provider.get_recent_book(futures)
             ohlcv = await self.provider.get_ohlcv(futures, "1m")
+            status = getattr(self.provider, "provider_status", status)
         except ProviderNotConfiguredError:
             trades, book, ohlcv, status = [], [], [], "not_configured"
         candles = store.candles.get(futures) or ohlcv_to_candles(futures, ohlcv)
@@ -71,14 +72,15 @@ class OrderFlowEngine:
 
     def provider_status(self) -> dict:
         settings = get_settings()
-        databento = DatabentoProvider()
-        historical_enabled = False
+        provider = DatabentoProvider() if settings.orderflow_provider.lower() == "databento" else self.provider
+        if hasattr(provider, "status"):
+            return provider.status()
         return {
-            "provider": settings.orderflow_provider.lower(),
-            "databento_configured": databento.configured,
-            "live_enabled": False,
-            "historical_enabled": historical_enabled,
-            "historical_reason": "not_implemented",
+            "provider": provider.name,
+            "api_key_present": False,
+            "historical_supported": True,
+            "live_supported": False,
+            "status": "ok",
         }
 
 
