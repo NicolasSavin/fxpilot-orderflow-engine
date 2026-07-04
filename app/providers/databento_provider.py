@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import importlib.util
+import re
 from collections.abc import AsyncIterator, Iterable
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -181,6 +182,22 @@ class DatabentoProvider(BaseMarketDataProvider):
             return []
 
     @staticmethod
+    def _parse_available_end(error: Exception) -> datetime | None:
+        text = str(error)
+        if "data_end_after_available_end" not in text and "available_end" not in text:
+            return None
+        match = re.search(r"available_end[\s=:]+['\"]?([^'\"\s,}]+)", text)
+        if not match:
+            return None
+        try:
+            parsed = pd.to_datetime(match.group(1), utc=True)
+        except Exception:
+            return None
+        if pd.isna(parsed):
+            return None
+        return parsed.to_pydatetime()
+
+    @staticmethod
     def _format_timestamp(value: datetime) -> str:
         return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -221,8 +238,9 @@ class DatabentoProvider(BaseMarketDataProvider):
             self.provider_status = "unavailable"
             return {**base, "connection": "sdk_unavailable", "message": "databento package is not installed."}
 
-        end_time = (end or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        end_time = (end or (datetime.now(timezone.utc) - timedelta(minutes=30))).astimezone(timezone.utc)
         start_time = end_time - timedelta(hours=lookback_hours)
+        retry_used = False
         futures_symbol = to_futures_symbol(symbol)
         try:
             response = await asyncio.to_thread(
@@ -232,22 +250,53 @@ class DatabentoProvider(BaseMarketDataProvider):
                 start=start_time,
                 end=end_time,
             )
-            rows = self._records(response)
-            trades = [self._trade_from_row(futures_symbol, row) for row in rows]
-            self.provider_status = "ok"
         except Exception as exc:
-            self.provider_status = "unavailable"
-            return {
-                **base,
-                "connection": "error",
-                "symbol": futures_symbol,
-                "window": {
-                    "start": self._format_timestamp(start_time),
-                    "end": self._format_timestamp(end_time),
-                },
-                "message": f"Databento historical connection failed: {exc}",
-            }
+            available_end = self._parse_available_end(exc)
+            if available_end is None:
+                self.provider_status = "unavailable"
+                return {
+                    **base,
+                    "connection": "error",
+                    "symbol": futures_symbol,
+                    "window": {
+                        "start": self._format_timestamp(start_time),
+                        "end": self._format_timestamp(end_time),
+                    },
+                    "actual_start": self._format_timestamp(start_time),
+                    "actual_end": self._format_timestamp(end_time),
+                    "retry_used": retry_used,
+                    "message": f"Databento historical connection failed: {exc}",
+                }
+            retry_used = True
+            end_time = (available_end - timedelta(minutes=1)).astimezone(timezone.utc)
+            start_time = end_time - timedelta(hours=lookback_hours)
+            try:
+                response = await asyncio.to_thread(
+                    self._get_range,
+                    schema=self.trades_schema,
+                    symbol=futures_symbol,
+                    start=start_time,
+                    end=end_time,
+                )
+            except Exception as retry_exc:
+                self.provider_status = "unavailable"
+                return {
+                    **base,
+                    "connection": "error",
+                    "symbol": futures_symbol,
+                    "window": {
+                        "start": self._format_timestamp(start_time),
+                        "end": self._format_timestamp(end_time),
+                    },
+                    "actual_start": self._format_timestamp(start_time),
+                    "actual_end": self._format_timestamp(end_time),
+                    "retry_used": retry_used,
+                    "message": f"Databento historical connection failed: {retry_exc}",
+                }
 
+        rows = self._records(response)
+        trades = [self._trade_from_row(futures_symbol, row) for row in rows]
+        self.provider_status = "ok"
         window = {"start": self._format_timestamp(start_time), "end": self._format_timestamp(end_time)}
         summary = self._trade_summary(trades)
         if summary is None:
@@ -256,6 +305,9 @@ class DatabentoProvider(BaseMarketDataProvider):
                 "connection": "ok",
                 "symbol": futures_symbol,
                 "window": window,
+                "actual_start": self._format_timestamp(start_time),
+                "actual_end": self._format_timestamp(end_time),
+                "retry_used": retry_used,
                 "message": "Databento historical connection established, but no trades were returned for the requested symbol and time window.",
             }
         return {
@@ -263,6 +315,9 @@ class DatabentoProvider(BaseMarketDataProvider):
             "connection": "ok",
             "symbol": futures_symbol,
             "window": window,
+            "actual_start": self._format_timestamp(start_time),
+            "actual_end": self._format_timestamp(end_time),
+            "retry_used": retry_used,
             "historical_available": True,
             "trades": summary,
             "message": "Databento historical connection established.",
