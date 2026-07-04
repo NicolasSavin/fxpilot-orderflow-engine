@@ -89,6 +89,7 @@ class OrderFlowEngine:
             provider_debug={"provider": self.provider.name, "source": "live_mt4_bridge", "requested_symbol": symbol, "mapped_symbol": futures, "trades_loaded": len(store.trades.get(futures, [])), "calculators_executed": True},
         )
         snapshot = source_manager.apply_metadata(snapshot, "mt4_live", reason="mt4_live_snapshot_ingested", age_seconds=0)
+        store.set_latest_snapshot(futures, snapshot)
         store.set_live_snapshot(futures, snapshot)
         store.set_cache_snapshot(futures, snapshot)
         return snapshot
@@ -135,11 +136,7 @@ class OrderFlowEngine:
             provider_name=self.provider.name, status=status, provider_debug=provider_debug
         )
 
-        decision = source_manager.choose(
-            databento=databento_snapshot,
-            mt4_live=store.live_snapshot(futures),
-            cache=store.cache_snapshot(futures),
-        )
+        decision = source_manager.select_best_snapshot(futures, databento_snapshot)
         if decision.snapshot is not None:
             selected = source_manager.apply_metadata(
                 decision.snapshot, decision.source, reason=decision.reason, age_seconds=decision.age_seconds
@@ -161,13 +158,24 @@ class OrderFlowEngine:
             databento = None
         live = store.live_snapshot(futures)
         cache = store.cache_snapshot(futures)
-        decision = source_manager.choose(databento=databento, mt4_live=live, cache=cache)
+        decision = source_manager.select_best_snapshot(futures, databento)
+        databento_status = source_manager.status_block(databento)
+        mt4_status = source_manager.status_block(live)
+        cache_status = source_manager.status_block(cache)
         return {
             "symbol": to_fx_symbol(futures),
+            "selected_source": decision.source,
+            "databento_status": databento_status,
+            "mt4_status": mt4_status,
+            "cache_status": cache_status,
+            "last_mt4_update": live.timestamp if live else None,
+            "last_databento_update": databento.timestamp if databento else None,
+            "selection_reason": decision.reason,
+            # Backward-compatible aliases retained for existing clients.
             "active_source": decision.source,
-            "databento": source_manager.status_block(databento),
-            "mt4_live": source_manager.status_block(live),
-            "cache": source_manager.status_block(cache),
+            "databento": databento_status,
+            "mt4_live": mt4_status,
+            "cache": cache_status,
             "decision_reason": decision.reason,
         }
 

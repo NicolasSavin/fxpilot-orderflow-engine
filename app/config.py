@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     default_tick_size_6b: float = 0.0001
     default_tick_size_6j: float = 0.0000005
     default_tick_size_gc: float = 0.1
+    mt4_live_fresh_seconds: int = 30
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
