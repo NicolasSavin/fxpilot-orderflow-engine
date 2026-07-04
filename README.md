@@ -14,12 +14,40 @@ Standalone Python/FastAPI service for calculating an FXPilot-owned Order Flow la
 
 ## Run
 
+### Docker
+
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
 
+### Windows PowerShell
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+$env:ORDERFLOW_PROVIDER = "mock"
+uvicorn app.main:app --host 0.0.0.0 --port 8010 --reload
+```
+
+### Windows Command Prompt
+
+```bat
+py -m venv .venv
+.venv\Scripts\activate.bat
+python -m pip install -r requirements.txt
+set ORDERFLOW_PROVIDER=mock
+uvicorn app.main:app --host 0.0.0.0 --port 8010 --reload
+```
+
 The service listens on port `8010`.
+
+## Tests
+
+```bash
+pytest
+```
 
 ## Health check
 
@@ -66,6 +94,19 @@ The current Databento provider is a safe scaffold. Without a key it returns `pro
 
 - `GET /health`
 - `GET /api/orderflow/latest?symbol=EURUSD`
+- `GET /api/orderflow/provider/status`
+- `GET /api/orderflow/symbols`
 - `POST /api/orderflow/ingest`
 - `GET /api/orderflow/debug`
-- `GET /api/orderflow/provider/status`
+
+## curl examples
+
+```bash
+curl http://localhost:8010/health
+curl 'http://localhost:8010/api/orderflow/latest?symbol=EURUSD'
+curl http://localhost:8010/api/orderflow/provider/status
+curl http://localhost:8010/api/orderflow/symbols
+curl -X POST http://localhost:8010/api/orderflow/ingest \
+  -H 'Content-Type: application/json' \
+  -d '{"symbol":"EURUSD","trades":[{"symbol":"6E","price":1.145,"size":10,"side":"buy"}],"book":[{"price":1.145,"bid_size":100,"ask_size":80}],"candles":[{"symbol":"6E","open":1.144,"high":1.146,"low":1.143,"close":1.145,"volume":1000}]}'
+```

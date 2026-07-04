@@ -14,3 +14,7 @@ def to_fx_symbol(symbol: str) -> str:
 
 def supported_symbols() -> list[str]:
     return sorted(set(FX_TO_FUTURES) | set(FUTURES_TO_FX))
+
+
+def supported_fx_symbols() -> list[str]:
+    return list(FX_TO_FUTURES.keys())
