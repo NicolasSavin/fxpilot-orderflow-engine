@@ -129,3 +129,46 @@ def test_databento_debug_endpoint(monkeypatch):
         "symbol": "6E",
         "lookback_hours": 24,
     }
+
+
+def test_latest_includes_databento_provider_debug(monkeypatch):
+    from app.api import routes_orderflow
+    from app.providers.databento_provider import DatabentoProvider
+
+    monkeypatch.setenv("DATABENTO_API_KEY", "test-key")
+    get_settings.cache_clear()
+    monkeypatch.setattr(DatabentoProvider, "sdk_available", property(lambda self: True))
+
+    class BrokenTimeseries:
+        def get_range(self, **kwargs):
+            raise RuntimeError("dataset_unavailable: GLBX.MDP3 rejected 6E")
+
+    class BrokenClient:
+        timeseries = BrokenTimeseries()
+
+    original_provider = routes_orderflow.engine.provider
+    routes_orderflow.engine.provider = DatabentoProvider(client=BrokenClient())
+    try:
+        response = client.get("/api/orderflow/latest?symbol=EURUSD")
+    finally:
+        routes_orderflow.engine.provider = original_provider
+        get_settings.cache_clear()
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["provider_status"] == "unavailable"
+    assert data["provider_debug"]["provider"] == "databento"
+    assert data["provider_debug"]["configured"] is True
+    assert data["provider_debug"]["api_key_exists"] is True
+    assert data["provider_debug"]["sdk_available"] is True
+    assert data["provider_debug"]["sdk_loaded"] is True
+    assert data["provider_debug"]["dataset"] == "GLBX.MDP3"
+    assert data["provider_debug"]["requested_symbol"] == "EURUSD"
+    assert data["provider_debug"]["mapped_symbol"] == "6E"
+    assert data["provider_debug"]["symbol_mapping_succeeded"] is True
+    assert data["provider_debug"]["request_sent"] is True
+    assert data["provider_debug"]["trades_loaded"] == 0
+    assert data["provider_debug"]["trades_returned"] == 0
+    assert data["provider_debug"]["calculators_executed"] is True
+    assert data["provider_debug"]["exception"] == "dataset_unavailable: GLBX.MDP3 rejected 6E"
+    assert data["provider_debug"]["reason"] == "dataset_unavailable: GLBX.MDP3 rejected 6E"

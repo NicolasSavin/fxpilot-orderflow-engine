@@ -113,6 +113,7 @@ class OrderFlowSnapshot(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     provider: Literal["mock", "databento"]
     provider_status: Literal["ok", "unavailable", "not_configured"]
+    provider_debug: dict[str, Any] = Field(default_factory=dict)
     delta: float = 0
     cumdelta: float = 0
     volume: float = 0
