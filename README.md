@@ -1,6 +1,6 @@
 # FXPilot OrderFlow Engine v1
 
-Standalone Python/FastAPI service for calculating an FXPilot-owned Order Flow layer from professional market data. Version 1 runs fully on mock/historical-style data and is architected so Databento can be added later without rewriting the service.
+Standalone Python/FastAPI service for calculating an FXPilot-owned Order Flow layer from professional market data. Version 1 runs fully on mock/historical-style data and includes a read-only Databento Historical connectivity check without changing the public FXPilot API.
 
 ## Features
 
@@ -79,16 +79,30 @@ ORDERFLOW_PROVIDER=mock
 
 It generates deterministic realistic trades and book levels for `EURUSD/6E`, `GBPUSD/6B`, `USDJPY/6J`, and `XAUUSD/GC`.
 
-## Databento later
+## Databento Historical check
 
-Set:
+Set the official Databento key before starting the service:
 
 ```env
 DATABENTO_API_KEY=your_key
 ORDERFLOW_PROVIDER=databento
 ```
 
-The current Databento provider is a safe scaffold. Without a key it returns `provider_not_configured` status instead of crashing. Live Databento is intentionally not required in v1.
+The Databento provider uses the official `databento` Python SDK and checks CME Globex MDP 3.0 historical trades (`GLBX.MDP3`, `trades`) for the raw futures symbol `6E` by default. Live Databento streaming is intentionally not required in v1. Without a key, the debug check returns a clear `not_configured` response instead of crashing.
+
+Run the check:
+
+```bash
+curl 'http://localhost:8010/api/debug/databento'
+```
+
+Optional parameters:
+
+```bash
+curl 'http://localhost:8010/api/debug/databento?symbol=6E&lookback_hours=24'
+```
+
+Successful responses include whether `DATABENTO_API_KEY` is configured, whether the SDK is importable, the dataset, supported futures symbols, connection status, and historical trade availability. When trades are returned, the response also includes trade count, first/last trade timestamps, price range, and total volume. If the SDK call succeeds but no trades are found in the requested window, the response explains that the connection was established and no trades were returned for that symbol/time window.
 
 ## Useful endpoints
 
@@ -98,6 +112,7 @@ The current Databento provider is a safe scaffold. Without a key it returns `pro
 - `GET /api/orderflow/symbols`
 - `POST /api/orderflow/ingest`
 - `GET /api/orderflow/debug`
+- `GET /api/debug/databento`
 
 ## curl examples
 
@@ -106,6 +121,7 @@ curl http://localhost:8010/health
 curl 'http://localhost:8010/api/orderflow/latest?symbol=EURUSD'
 curl http://localhost:8010/api/orderflow/provider/status
 curl http://localhost:8010/api/orderflow/symbols
+curl 'http://localhost:8010/api/debug/databento'
 curl -X POST http://localhost:8010/api/orderflow/ingest \
   -H 'Content-Type: application/json' \
   -d '{"symbol":"EURUSD","trades":[{"symbol":"6E","price":1.145,"size":10,"side":"buy"}],"book":[{"price":1.145,"bid_size":100,"ask_size":80}],"candles":[{"symbol":"6E","open":1.144,"high":1.146,"low":1.143,"close":1.145,"volume":1000}]}'

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import importlib.util
 from collections.abc import AsyncIterator, Iterable
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -36,6 +37,14 @@ class DatabentoProvider(BaseMarketDataProvider):
     @property
     def live_supported(self) -> bool:
         return False
+
+    @property
+    def sdk_available(self) -> bool:
+        return importlib.util.find_spec("databento") is not None
+
+    @property
+    def symbols_supported(self) -> list[str]:
+        return ["6E", "6B", "6J", "GC"]
 
     def status(self) -> dict[str, Any]:
         return {
@@ -170,6 +179,94 @@ class DatabentoProvider(BaseMarketDataProvider):
         except Exception:
             self.provider_status = "unavailable" if self.configured else "not_configured"
             return []
+
+    @staticmethod
+    def _format_timestamp(value: datetime) -> str:
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    @staticmethod
+    def _trade_summary(trades: list[Trade]) -> dict[str, Any] | None:
+        if not trades:
+            return None
+        prices = [trade.price for trade in trades]
+        return {
+            "count": len(trades),
+            "first_time": DatabentoProvider._format_timestamp(trades[0].timestamp),
+            "last_time": DatabentoProvider._format_timestamp(trades[-1].timestamp),
+            "price_range": {"min": min(prices), "max": max(prices)},
+            "total_volume": sum(trade.size for trade in trades),
+        }
+
+    async def debug_historical_connection(
+        self,
+        symbol: str = "6E",
+        *,
+        lookback_hours: int = 72,
+        end: datetime | None = None,
+    ) -> dict[str, Any]:
+        configured = self.configured
+        sdk_available = self.sdk_available
+        base: dict[str, Any] = {
+            "configured": configured,
+            "sdk_available": sdk_available,
+            "connection": "not_checked",
+            "dataset": self.dataset,
+            "symbols_supported": self.symbols_supported,
+            "historical_available": False,
+        }
+        if not configured:
+            self.provider_status = "not_configured"
+            return {**base, "connection": "not_configured", "message": "DATABENTO_API_KEY is not configured."}
+        if not sdk_available:
+            self.provider_status = "unavailable"
+            return {**base, "connection": "sdk_unavailable", "message": "databento package is not installed."}
+
+        end_time = (end or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        start_time = end_time - timedelta(hours=lookback_hours)
+        futures_symbol = to_futures_symbol(symbol)
+        try:
+            response = await asyncio.to_thread(
+                self._get_range,
+                schema=self.trades_schema,
+                symbol=futures_symbol,
+                start=start_time,
+                end=end_time,
+            )
+            rows = self._records(response)
+            trades = [self._trade_from_row(futures_symbol, row) for row in rows]
+            self.provider_status = "ok"
+        except Exception as exc:
+            self.provider_status = "unavailable"
+            return {
+                **base,
+                "connection": "error",
+                "symbol": futures_symbol,
+                "window": {
+                    "start": self._format_timestamp(start_time),
+                    "end": self._format_timestamp(end_time),
+                },
+                "message": f"Databento historical connection failed: {exc}",
+            }
+
+        window = {"start": self._format_timestamp(start_time), "end": self._format_timestamp(end_time)}
+        summary = self._trade_summary(trades)
+        if summary is None:
+            return {
+                **base,
+                "connection": "ok",
+                "symbol": futures_symbol,
+                "window": window,
+                "message": "Databento historical connection established, but no trades were returned for the requested symbol and time window.",
+            }
+        return {
+            **base,
+            "connection": "ok",
+            "symbol": futures_symbol,
+            "window": window,
+            "historical_available": True,
+            "trades": summary,
+            "message": "Databento historical connection established.",
+        }
 
     async def stream_trades(self, symbol: str) -> AsyncIterator[Trade]:
         if False:
