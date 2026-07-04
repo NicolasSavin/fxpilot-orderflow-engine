@@ -172,3 +172,49 @@ def test_latest_includes_databento_provider_debug(monkeypatch):
     assert data["provider_debug"]["calculators_executed"] is True
     assert data["provider_debug"]["exception"] == "dataset_unavailable: GLBX.MDP3 rejected 6E"
     assert data["provider_debug"]["reason"] == "dataset_unavailable: GLBX.MDP3 rejected 6E"
+
+
+def test_live_tick_ingestion_updates_latest_snapshot():
+    from app.storage.memory_store import store
+
+    for collection in [store.trades, store.books, store.candles, store.cumdelta, store.cumdelta_points, store.latest_snapshots]:
+        collection.pop("6B", None)
+    store.cumdelta_last_price.pop("6B", None)
+
+    first = {
+        "symbol": "GBPUSD",
+        "bid": 1.2700,
+        "ask": 1.2702,
+        "last": 1.2702,
+        "volume": 10,
+        "timestamp": "2026-07-04T12:00:00Z",
+    }
+    second = {
+        "symbol": "GBPUSD",
+        "bid": 1.2703,
+        "ask": 1.2705,
+        "last": 1.2705,
+        "volume": 5,
+        "timestamp": "2026-07-04T12:00:01Z",
+    }
+
+    first_response = client.post("/api/orderflow/live", json=first)
+    second_response = client.post("/api/orderflow/live", json=second)
+    latest_response = client.get("/api/orderflow/latest?symbol=GBPUSD")
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert latest_response.status_code == 200
+    latest = latest_response.json()
+    assert latest == second_response.json()
+    assert latest["symbol"] == "GBPUSD"
+    assert latest["futures_symbol"] == "6B"
+    assert latest["delta"] == 15
+    assert latest["cumdelta"] == 15
+    assert latest["volume"] == 15
+    assert latest["vwap"] == (1.2702 * 10 + 1.2705 * 5) / 15
+    assert latest["poc"] == 1.2702
+    assert latest["provider_debug"]["source"] == "live_mt4_bridge"
+    assert latest["debug"]["profile_levels"] == 2
+    assert "orderflow_bias" in latest
+    assert "market_state" in latest
