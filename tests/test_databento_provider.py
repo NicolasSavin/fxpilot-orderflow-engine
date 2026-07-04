@@ -213,11 +213,16 @@ def test_debug_historical_connection_retries_available_end(monkeypatch):
     assert result["connection"] == "ok"
     assert result["historical_available"] is True
     assert result["retry_used"] is True
-    assert result["actual_end"] == "2026-07-01T09:59:00Z"
-    assert result["actual_start"] == "2026-06-30T09:59:00Z"
+    assert result["actual_end"] == "2026-07-01T09:55:00Z"
+    assert result["actual_start"] == "2026-06-30T09:55:00Z"
+    assert result["provider_debug"] == {
+        "cached_available_end": "2026-07-01T10:00:00Z",
+        "requested_end": "2026-07-01T12:00:00Z",
+        "actual_end": "2026-07-01T09:55:00Z",
+    }
     assert len(client.timeseries.calls) == 2
     assert client.timeseries.calls[0]["end"] == datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
-    assert client.timeseries.calls[1]["end"] == datetime(2026, 7, 1, 9, 59, tzinfo=timezone.utc)
+    assert client.timeseries.calls[1]["end"] == datetime(2026, 7, 1, 9, 55, tzinfo=timezone.utc)
 
 
 def test_debug_historical_connection_reports_actual_window_without_retry(monkeypatch):
@@ -236,3 +241,40 @@ def test_debug_historical_connection_reports_actual_window_without_retry(monkeyp
     assert result["retry_used"] is False
     assert result["actual_start"] == "2026-07-01T10:00:00Z"
     assert result["actual_end"] == "2026-07-01T12:00:00Z"
+
+
+def test_get_recent_trades_caches_available_end_and_reuses_safe_window(monkeypatch):
+    monkeypatch.setenv("DATABENTO_API_KEY", "test-key")
+    rows = [{"ts_event": datetime(2026, 7, 1, 9, 55, tzinfo=timezone.utc), "price": 1_140_000_000, "size": 2, "side": "B"}]
+    client = SequencedClient([
+        RuntimeError("422 data_end_after_available_end available_end='2026-07-01T10:00:00Z'"),
+        FakeDatabentoResponse(rows),
+        FakeDatabentoResponse(rows),
+    ])
+    provider = DatabentoProvider(client=client)
+
+    first = asyncio.run(
+        provider.get_recent_trades(
+            "EURUSD",
+            start=datetime(2026, 7, 1, 11, 0, tzinfo=timezone.utc),
+            end=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+        )
+    )
+    second = asyncio.run(
+        provider.get_recent_trades(
+            "EURUSD",
+            start=datetime(2026, 7, 1, 11, 0, tzinfo=timezone.utc),
+            end=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    assert len(first) == 1
+    assert len(second) == 1
+    assert provider.cached_available_end == datetime(2026, 7, 1, 10, 0, tzinfo=timezone.utc)
+    assert client.timeseries.calls[0]["end"] == datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    assert client.timeseries.calls[1]["end"] == datetime(2026, 7, 1, 9, 55, tzinfo=timezone.utc)
+    assert client.timeseries.calls[2]["end"] == datetime(2026, 7, 1, 9, 55, tzinfo=timezone.utc)
+    debug = provider.diagnostic_snapshot("EURUSD", "6E")
+    assert debug["cached_available_end"] == "2026-07-01T10:00:00Z"
+    assert debug["requested_end"] == "2026-07-01T12:00:00Z"
+    assert debug["actual_end"] == "2026-07-01T09:55:00Z"

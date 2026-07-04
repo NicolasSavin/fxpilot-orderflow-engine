@@ -31,6 +31,9 @@ class DatabentoProvider(BaseMarketDataProvider):
         self.last_trades_loaded = 0
         self.last_history_loaded = False
         self.last_debug: dict[str, Any] = {}
+        self.cached_available_end: datetime | None = None
+        self.last_requested_end: datetime | None = None
+        self.last_actual_end: datetime | None = None
 
     @property
     def configured(self) -> bool:
@@ -62,8 +65,47 @@ class DatabentoProvider(BaseMarketDataProvider):
         }
 
     def _default_window(self, minutes: int = 30) -> tuple[datetime, datetime]:
-        end = datetime.now(timezone.utc)
+        end = self._resolve_historical_end(None)
         return end - timedelta(minutes=minutes), end
+
+    def _cache_available_end(self, available_end: datetime) -> None:
+        self.cached_available_end = available_end.astimezone(timezone.utc)
+
+    def _resolve_historical_end(self, requested_end: datetime | None = None) -> datetime:
+        requested = (requested_end or (datetime.now(timezone.utc) - timedelta(minutes=30))).astimezone(timezone.utc)
+        self.last_requested_end = requested
+        if self.cached_available_end is None:
+            self.last_actual_end = requested
+            return requested
+        actual = min(requested, (self.cached_available_end - timedelta(minutes=5)).astimezone(timezone.utc))
+        self.last_actual_end = actual
+        return actual
+
+    async def _get_range_resolved(
+        self,
+        *,
+        schema: str,
+        symbol: str,
+        start: datetime,
+        end: datetime,
+    ) -> tuple[Any, datetime, datetime, bool]:
+        requested_end = end.astimezone(timezone.utc)
+        actual_end = self._resolve_historical_end(requested_end)
+        duration = requested_end - start.astimezone(timezone.utc)
+        actual_start = actual_end - duration
+        try:
+            response = await asyncio.to_thread(self._get_range, schema=schema, symbol=symbol, start=actual_start, end=actual_end)
+            return response, actual_start, actual_end, False
+        except Exception as exc:
+            available_end = self._parse_available_end(exc)
+            if available_end is None:
+                raise
+            self._cache_available_end(available_end)
+            actual_end = (available_end - timedelta(minutes=5)).astimezone(timezone.utc)
+            actual_start = actual_end - duration
+            self.last_actual_end = actual_end
+            response = await asyncio.to_thread(self._get_range, schema=schema, symbol=symbol, start=actual_start, end=actual_end)
+            return response, actual_start, actual_end, True
 
     def diagnostic_snapshot(self, requested_symbol: str, mapped_symbol: str, *, calculators_executed: bool = False) -> dict[str, Any]:
         mapping_succeeded = requested_symbol.upper() != mapped_symbol.upper() or mapped_symbol.upper() in self.symbols_supported
@@ -95,6 +137,9 @@ class DatabentoProvider(BaseMarketDataProvider):
             "trades_loaded": self.last_trades_loaded,
             "trades_returned": self.last_trades_loaded,
             "calculators_executed": calculators_executed,
+            "cached_available_end": self._format_timestamp(self.cached_available_end) if self.cached_available_end else None,
+            "requested_end": self._format_timestamp(self.last_requested_end) if self.last_requested_end else None,
+            "actual_end": self._format_timestamp(self.last_actual_end) if self.last_actual_end else None,
             "exception": self.last_exception,
             "reason": reason,
         }
@@ -199,7 +244,7 @@ class DatabentoProvider(BaseMarketDataProvider):
             start, end = self._default_window()
         try:
             self.last_exception = None
-            response = await asyncio.to_thread(self._get_range, schema=self.trades_schema, symbol=symbol, start=start, end=end)
+            response, start, end, _ = await self._get_range_resolved(schema=self.trades_schema, symbol=symbol, start=start, end=end)
             rows = self._records(response)
             trades = [self._trade_from_row(symbol, row) for row in rows]
             self.last_trades_loaded = len(trades)
@@ -226,7 +271,7 @@ class DatabentoProvider(BaseMarketDataProvider):
             start, end = self._default_window(minutes=120)
         schema = f"ohlcv-{timeframe}"
         try:
-            response = await asyncio.to_thread(self._get_range, schema=schema, symbol=symbol, start=start, end=end)
+            response, start, end, _ = await self._get_range_resolved(schema=schema, symbol=symbol, start=start, end=end)
             if self.provider_status != "unavailable":
                 self.provider_status = "ok"
             return [self._candle_from_row(symbol, row) for row in self._records(response)]
@@ -254,6 +299,13 @@ class DatabentoProvider(BaseMarketDataProvider):
     @staticmethod
     def _format_timestamp(value: datetime) -> str:
         return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    def _historical_window_debug(self) -> dict[str, str | None]:
+        return {
+            "cached_available_end": self._format_timestamp(self.cached_available_end) if self.cached_available_end else None,
+            "requested_end": self._format_timestamp(self.last_requested_end) if self.last_requested_end else None,
+            "actual_end": self._format_timestamp(self.last_actual_end) if self.last_actual_end else None,
+        }
 
     @staticmethod
     def _trade_summary(trades: list[Trade]) -> dict[str, Any] | None:
@@ -292,61 +344,35 @@ class DatabentoProvider(BaseMarketDataProvider):
             self.provider_status = "unavailable"
             return {**base, "connection": "sdk_unavailable", "message": "databento package is not installed."}
 
-        end_time = (end or (datetime.now(timezone.utc) - timedelta(minutes=30))).astimezone(timezone.utc)
-        start_time = end_time - timedelta(hours=lookback_hours)
+        requested_end = (end or (datetime.now(timezone.utc) - timedelta(minutes=30))).astimezone(timezone.utc)
+        requested_start = requested_end - timedelta(hours=lookback_hours)
         retry_used = False
         futures_symbol = to_futures_symbol(symbol)
         try:
-            response = await asyncio.to_thread(
-                self._get_range,
+            response, start_time, end_time, retry_used = await self._get_range_resolved(
                 schema=self.trades_schema,
                 symbol=futures_symbol,
-                start=start_time,
-                end=end_time,
+                start=requested_start,
+                end=requested_end,
             )
         except Exception as exc:
-            available_end = self._parse_available_end(exc)
-            if available_end is None:
-                self.provider_status = "unavailable"
-                return {
-                    **base,
-                    "connection": "error",
-                    "symbol": futures_symbol,
-                    "window": {
-                        "start": self._format_timestamp(start_time),
-                        "end": self._format_timestamp(end_time),
-                    },
-                    "actual_start": self._format_timestamp(start_time),
-                    "actual_end": self._format_timestamp(end_time),
-                    "retry_used": retry_used,
-                    "message": f"Databento historical connection failed: {exc}",
-                }
-            retry_used = True
-            end_time = (available_end - timedelta(minutes=1)).astimezone(timezone.utc)
-            start_time = end_time - timedelta(hours=lookback_hours)
-            try:
-                response = await asyncio.to_thread(
-                    self._get_range,
-                    schema=self.trades_schema,
-                    symbol=futures_symbol,
-                    start=start_time,
-                    end=end_time,
-                )
-            except Exception as retry_exc:
-                self.provider_status = "unavailable"
-                return {
-                    **base,
-                    "connection": "error",
-                    "symbol": futures_symbol,
-                    "window": {
-                        "start": self._format_timestamp(start_time),
-                        "end": self._format_timestamp(end_time),
-                    },
-                    "actual_start": self._format_timestamp(start_time),
-                    "actual_end": self._format_timestamp(end_time),
-                    "retry_used": retry_used,
-                    "message": f"Databento historical connection failed: {retry_exc}",
-                }
+            self.provider_status = "unavailable"
+            start_time = self.last_actual_end - timedelta(hours=lookback_hours) if self.last_actual_end else requested_start
+            end_time = self.last_actual_end or requested_end
+            return {
+                **base,
+                "connection": "error",
+                "symbol": futures_symbol,
+                "window": {
+                    "start": self._format_timestamp(start_time),
+                    "end": self._format_timestamp(end_time),
+                },
+                "actual_start": self._format_timestamp(start_time),
+                "actual_end": self._format_timestamp(end_time),
+                "retry_used": retry_used,
+                "provider_debug": self._historical_window_debug(),
+                "message": f"Databento historical connection failed: {exc}",
+            }
 
         rows = self._records(response)
         trades = [self._trade_from_row(futures_symbol, row) for row in rows]
@@ -362,6 +388,7 @@ class DatabentoProvider(BaseMarketDataProvider):
                 "actual_start": self._format_timestamp(start_time),
                 "actual_end": self._format_timestamp(end_time),
                 "retry_used": retry_used,
+                "provider_debug": self._historical_window_debug(),
                 "message": "Databento historical connection established, but no trades were returned for the requested symbol and time window.",
             }
         return {
@@ -372,6 +399,7 @@ class DatabentoProvider(BaseMarketDataProvider):
             "actual_start": self._format_timestamp(start_time),
             "actual_end": self._format_timestamp(end_time),
             "retry_used": retry_used,
+            "provider_debug": self._historical_window_debug(),
             "historical_available": True,
             "trades": summary,
             "message": "Databento historical connection established.",
