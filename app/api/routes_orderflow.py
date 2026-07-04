@@ -33,6 +33,10 @@ async def latest(symbol: str = "EURUSD"):
 def symbols() -> list[str]:
     return supported_fx_symbols()
 
+@router.get("/source/status")
+def source_status(symbol: str = "EURUSD"):
+    return engine.source_status(symbol)
+
 @router.post("/live", response_model=OrderFlowSnapshot)
 def ingest_live(payload: LiveTickPayload):
     return engine.ingest_live_tick(

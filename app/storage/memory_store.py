@@ -13,6 +13,8 @@ class MemoryStore:
         self.candles: dict[str, list[Candle]] = {}
         self.last_update: datetime | None = None
         self.latest_snapshots: dict[str, OrderFlowSnapshot] = {}
+        self.live_snapshots: dict[str, OrderFlowSnapshot] = {}
+        self.cache_snapshots: dict[str, OrderFlowSnapshot] = {}
 
     def reset_cumdelta_session(self, symbol: str) -> None:
         self.cumdelta[symbol] = 0
@@ -39,6 +41,21 @@ class MemoryStore:
 
     def latest_snapshot(self, symbol: str) -> OrderFlowSnapshot | None:
         return self.latest_snapshots.get(symbol)
+
+    def set_live_snapshot(self, symbol: str, snapshot: OrderFlowSnapshot) -> None:
+        self.live_snapshots[symbol] = snapshot
+        self.last_update = snapshot.timestamp
+
+    def live_snapshot(self, symbol: str) -> OrderFlowSnapshot | None:
+        return self.live_snapshots.get(symbol)
+
+    def set_cache_snapshot(self, symbol: str, snapshot: OrderFlowSnapshot) -> None:
+        self.cache_snapshots[symbol] = snapshot
+        self.latest_snapshots[symbol] = snapshot
+        self.last_update = snapshot.timestamp
+
+    def cache_snapshot(self, symbol: str) -> OrderFlowSnapshot | None:
+        return self.cache_snapshots.get(symbol) or self.latest_snapshots.get(symbol)
 
     @property
     def store_size(self) -> int:
