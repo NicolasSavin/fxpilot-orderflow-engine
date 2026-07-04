@@ -1,20 +1,27 @@
 from datetime import datetime, timezone
 from app.models.market import BookLevel, Candle, Trade
+from app.models.orderflow import CumDeltaPoint
 
 
 class MemoryStore:
     def __init__(self) -> None:
         self.cumdelta: dict[str, float] = {}
+        self.cumdelta_points: dict[str, list[CumDeltaPoint]] = {}
+        self.cumdelta_last_price: dict[str, float] = {}
         self.trades: dict[str, list[Trade]] = {}
         self.books: dict[str, list[BookLevel]] = {}
         self.candles: dict[str, list[Candle]] = {}
         self.last_update: datetime | None = None
 
+    def reset_cumdelta_session(self, symbol: str) -> None:
+        self.cumdelta[symbol] = 0
+        self.cumdelta_points[symbol] = []
+        self.cumdelta_last_price.pop(symbol, None)
+
     def update_cumdelta(self, symbol: str, delta: float, reset: bool = False) -> float:
-        if reset:
-            self.cumdelta[symbol] = 0
-        self.cumdelta[symbol] = self.cumdelta.get(symbol, 0) + delta
-        return self.cumdelta[symbol]
+        from app.calculators.cumdelta import update_cumdelta
+
+        return update_cumdelta(symbol, delta, reset_session=reset, memory_store=self)
 
     def ingest(self, symbol: str, trades: list[Trade] | None = None, book: list[BookLevel] | None = None, candles: list[Candle] | None = None) -> None:
         if trades:
