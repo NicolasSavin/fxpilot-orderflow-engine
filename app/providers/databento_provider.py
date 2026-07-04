@@ -26,6 +26,11 @@ class DatabentoProvider(BaseMarketDataProvider):
         self.api_key = get_settings().databento_api_key
         self._client = client
         self.provider_status = "ok" if self.configured else "not_configured"
+        self.last_exception: str | None = None
+        self.last_request_sent = False
+        self.last_trades_loaded = 0
+        self.last_history_loaded = False
+        self.last_debug: dict[str, Any] = {}
 
     @property
     def configured(self) -> bool:
@@ -60,6 +65,40 @@ class DatabentoProvider(BaseMarketDataProvider):
         end = datetime.now(timezone.utc)
         return end - timedelta(minutes=minutes), end
 
+    def diagnostic_snapshot(self, requested_symbol: str, mapped_symbol: str, *, calculators_executed: bool = False) -> dict[str, Any]:
+        mapping_succeeded = requested_symbol.upper() != mapped_symbol.upper() or mapped_symbol.upper() in self.symbols_supported
+        reason = None
+        if not self.configured:
+            reason = "api_key_missing"
+        elif not self.sdk_available:
+            reason = "sdk_unavailable"
+        elif self.last_exception:
+            reason = self.last_exception
+        elif self.provider_status == "unavailable":
+            reason = "provider_unavailable"
+        elif not self.last_request_sent:
+            reason = "request_not_sent"
+        elif self.last_trades_loaded == 0:
+            reason = "no_trades_returned"
+        return {
+            "provider": self.name,
+            "configured": self.configured,
+            "api_key_exists": self.configured,
+            "sdk_available": self.sdk_available,
+            "sdk_loaded": self.sdk_available,
+            "dataset": self.dataset,
+            "requested_symbol": requested_symbol,
+            "mapped_symbol": mapped_symbol,
+            "symbol_mapping_succeeded": mapping_succeeded,
+            "request_sent": self.last_request_sent,
+            "history_loaded": self.last_history_loaded,
+            "trades_loaded": self.last_trades_loaded,
+            "trades_returned": self.last_trades_loaded,
+            "calculators_executed": calculators_executed,
+            "exception": self.last_exception,
+            "reason": reason,
+        }
+
     def _get_client(self) -> Any | None:
         if not self.configured:
             self.provider_status = "not_configured"
@@ -68,8 +107,9 @@ class DatabentoProvider(BaseMarketDataProvider):
             try:
                 databento = importlib.import_module("databento")
                 self._client = databento.Historical(self.api_key)
-            except Exception:
+            except Exception as exc:
                 self.provider_status = "unavailable"
+                self.last_exception = str(exc)
                 return None
         return self._client
 
@@ -77,6 +117,7 @@ class DatabentoProvider(BaseMarketDataProvider):
         client = self._get_client()
         if client is None:
             return []
+        self.last_request_sent = True
         return client.timeseries.get_range(
             dataset=self.dataset,
             symbols=[to_futures_symbol(symbol)],
@@ -150,16 +191,27 @@ class DatabentoProvider(BaseMarketDataProvider):
     async def get_recent_trades(self, symbol: str, start=None, end=None) -> list[Trade]:
         if not self.configured:
             self.provider_status = "not_configured"
+            self.last_exception = None
+            self.last_request_sent = False
+            self.last_trades_loaded = 0
             return []
         if start is None or end is None:
             start, end = self._default_window()
         try:
+            self.last_exception = None
             response = await asyncio.to_thread(self._get_range, schema=self.trades_schema, symbol=symbol, start=start, end=end)
+            rows = self._records(response)
+            trades = [self._trade_from_row(symbol, row) for row in rows]
+            self.last_trades_loaded = len(trades)
+            self.last_history_loaded = len(trades) > 0
             if self.provider_status != "unavailable":
                 self.provider_status = "ok"
-            return [self._trade_from_row(symbol, row) for row in self._records(response)]
-        except Exception:
+            return trades
+        except Exception as exc:
             self.provider_status = "unavailable" if self.configured else "not_configured"
+            self.last_exception = str(exc)
+            self.last_trades_loaded = 0
+            self.last_history_loaded = False
             return []
 
     async def get_recent_book(self, symbol: str) -> list[BookLevel]:
@@ -168,6 +220,7 @@ class DatabentoProvider(BaseMarketDataProvider):
     async def get_ohlcv(self, symbol: str, timeframe: str, start=None, end=None) -> list[Candle]:
         if not self.configured:
             self.provider_status = "not_configured"
+            self.last_exception = None
             return []
         if start is None or end is None:
             start, end = self._default_window(minutes=120)
@@ -177,8 +230,9 @@ class DatabentoProvider(BaseMarketDataProvider):
             if self.provider_status != "unavailable":
                 self.provider_status = "ok"
             return [self._candle_from_row(symbol, row) for row in self._records(response)]
-        except Exception:
+        except Exception as exc:
             self.provider_status = "unavailable" if self.configured else "not_configured"
+            self.last_exception = str(exc)
             return []
 
     @staticmethod
