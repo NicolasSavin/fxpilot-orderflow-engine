@@ -14,6 +14,7 @@ from app.providers.base import ProviderNotConfiguredError
 from app.providers.databento_provider import DatabentoProvider
 from app.providers.mock_provider import MockProvider
 from app.services.normalizer import ohlcv_to_candles
+from app.services.source_manager import source_manager
 from app.services.symbol_mapper import supported_symbols, to_futures_symbol, to_fx_symbol
 from app.storage.memory_store import store
 
@@ -87,65 +88,88 @@ class OrderFlowEngine:
             provider_name=self.provider.name, status="ok", timestamp=timestamp,
             provider_debug={"provider": self.provider.name, "source": "live_mt4_bridge", "requested_symbol": symbol, "mapped_symbol": futures, "trades_loaded": len(store.trades.get(futures, [])), "calculators_executed": True},
         )
-        store.set_latest_snapshot(futures, snapshot)
+        snapshot = source_manager.apply_metadata(snapshot, "mt4_live", reason="mt4_live_snapshot_ingested", age_seconds=0)
+        store.set_live_snapshot(futures, snapshot)
+        store.set_cache_snapshot(futures, snapshot)
         return snapshot
 
     async def latest(self, symbol: str) -> OrderFlowSnapshot:
-        settings = get_settings(); futures = to_futures_symbol(symbol); fx = to_fx_symbol(futures); status = "ok"
-        cached = store.latest_snapshot(futures)
-        if cached is not None:
-            return cached
+        futures = to_futures_symbol(symbol)
+        databento_snapshot: OrderFlowSnapshot | None = None
         provider_exception: str | None = None
+
         try:
-            trades = store.trades.get(futures) or await self.provider.get_recent_trades(futures)
-            book = store.books.get(futures) or await self.provider.get_recent_book(futures)
+            trades = await self.provider.get_recent_trades(futures)
+            book = await self.provider.get_recent_book(futures)
             ohlcv = await self.provider.get_ohlcv(futures, "1m")
-            status = getattr(self.provider, "provider_status", status)
+            status = getattr(self.provider, "provider_status", "ok")
         except ProviderNotConfiguredError as exc:
             trades, book, ohlcv, status = [], [], [], "not_configured"
             provider_exception = str(exc) or "provider_not_configured"
         except Exception as exc:
             trades, book, ohlcv, status = [], [], [], "unavailable"
             provider_exception = str(exc)
-        candles = store.candles.get(futures) or ohlcv_to_candles(futures, ohlcv)
+
+        candles = ohlcv_to_candles(futures, ohlcv)
         if not candles and trades:
             candles = [Candle(symbol=futures, timestamp=trades[-1].timestamp, open=trades[0].price, high=max(t.price for t in trades), low=min(t.price for t in trades), close=trades[-1].price, volume=sum(t.size for t in trades))]
         delta = calculate_delta(trades)
         cumdelta = update_cumdelta(futures, delta["delta"])
-        profile = calculate_volume_profile(trades, settings.tick_size_for(futures))
-        va = calculate_value_area(profile["volume_by_price"], settings.value_area_percent)
-        dom = calculate_dom_pressure(book)
-        absorption = calculate_absorption(candles, delta["delta"], profile["total_volume"])
-        rvol, rvol_reason = calculate_rvol(candles, profile["total_volume"])
-        state = calculate_market_state(candles, delta["delta"], cumdelta, profile["total_volume"], va["vah"], va["val"])
+        profile = calculate_volume_profile(trades, get_settings().tick_size_for(futures))
+
         if hasattr(self.provider, "diagnostic_snapshot"):
             provider_debug = self.provider.diagnostic_snapshot(symbol, futures, calculators_executed=True)
         else:
             provider_debug = {
-                "provider": self.provider.name,
-                "configured": True,
-                "api_key_exists": False,
-                "sdk_available": False,
-                "sdk_loaded": False,
-                "requested_symbol": symbol,
-                "mapped_symbol": futures,
-                "symbol_mapping_succeeded": symbol.upper() != futures.upper() or symbol.upper() == futures.upper(),
-                "request_sent": True,
-                "history_loaded": bool(trades or ohlcv),
-                "trades_loaded": len(trades),
-                "trades_returned": len(trades),
-                "calculators_executed": True,
-                "exception": provider_exception,
-                "reason": provider_exception,
+                "provider": self.provider.name, "configured": True, "api_key_exists": False, "sdk_available": False,
+                "sdk_loaded": False, "requested_symbol": symbol, "mapped_symbol": futures, "symbol_mapping_succeeded": True,
+                "request_sent": True, "history_loaded": bool(trades or ohlcv), "trades_loaded": len(trades),
+                "trades_returned": len(trades), "calculators_executed": True, "exception": provider_exception, "reason": provider_exception,
             }
         if provider_exception and not provider_debug.get("exception"):
             provider_debug["exception"] = provider_exception
             provider_debug["reason"] = provider_exception
-        snapshot = self._build_snapshot(
-            requested_symbol=symbol, futures=futures, trades=trades, book=book, candles=candles, provider_name=self.provider.name, status=status, provider_debug=provider_debug
+
+        databento_snapshot = self._build_snapshot(
+            requested_symbol=symbol, futures=futures, trades=trades, book=book, candles=candles,
+            provider_name=self.provider.name, status=status, provider_debug=provider_debug
         )
-        store.last_update = snapshot.timestamp
-        return snapshot
+
+        decision = source_manager.choose(
+            databento=databento_snapshot,
+            mt4_live=store.live_snapshot(futures),
+            cache=store.cache_snapshot(futures),
+        )
+        if decision.snapshot is not None:
+            selected = source_manager.apply_metadata(
+                decision.snapshot, decision.source, reason=decision.reason, age_seconds=decision.age_seconds
+            )
+            if decision.source == "databento":
+                store.set_cache_snapshot(futures, selected)
+            return selected
+
+        unavailable = source_manager.apply_metadata(
+            databento_snapshot, "unavailable", reason=decision.reason, age_seconds=decision.age_seconds
+        )
+        store.last_update = unavailable.timestamp
+        return unavailable
+
+    def source_status(self, symbol: str) -> dict:
+        futures = to_futures_symbol(symbol)
+        databento = store.cache_snapshot(futures)
+        if databento is not None and databento.data_source != "databento":
+            databento = None
+        live = store.live_snapshot(futures)
+        cache = store.cache_snapshot(futures)
+        decision = source_manager.choose(databento=databento, mt4_live=live, cache=cache)
+        return {
+            "symbol": to_fx_symbol(futures),
+            "active_source": decision.source,
+            "databento": source_manager.status_block(databento),
+            "mt4_live": source_manager.status_block(live),
+            "cache": source_manager.status_block(cache),
+            "decision_reason": decision.reason,
+        }
 
     def debug(self) -> dict:
         return {"provider": self.provider.name, "symbols": supported_symbols(), "store_size": store.store_size, "last_update": store.last_update}

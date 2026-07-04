@@ -177,7 +177,7 @@ def test_latest_includes_databento_provider_debug(monkeypatch):
 def test_live_tick_ingestion_updates_latest_snapshot():
     from app.storage.memory_store import store
 
-    for collection in [store.trades, store.books, store.candles, store.cumdelta, store.cumdelta_points, store.latest_snapshots]:
+    for collection in [store.trades, store.books, store.candles, store.cumdelta, store.cumdelta_points, store.latest_snapshots, store.live_snapshots, store.cache_snapshots]:
         collection.pop("6B", None)
     store.cumdelta_last_price.pop("6B", None)
 
@@ -206,7 +206,9 @@ def test_live_tick_ingestion_updates_latest_snapshot():
     assert second_response.status_code == 200
     assert latest_response.status_code == 200
     latest = latest_response.json()
-    assert latest == second_response.json()
+    assert latest["data_source"] == "mt4_live"
+    assert latest["data_source_label"] == "MT4 Bridge"
+    assert latest["data_source_quality"] == 3
     assert latest["symbol"] == "GBPUSD"
     assert latest["futures_symbol"] == "6B"
     assert latest["delta"] == 15

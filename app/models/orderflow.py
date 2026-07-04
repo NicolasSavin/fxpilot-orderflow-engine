@@ -112,6 +112,12 @@ class OrderFlowSnapshot(BaseModel):
     futures_symbol: str
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     provider: Literal["mock", "databento"]
+    data_source: Literal["databento", "mt4_live", "cache", "unavailable"] = "unavailable"
+    data_source_label: str = "Unavailable"
+    data_source_quality: int = 0
+    data_source_status: Literal["ok", "unavailable"] = "unavailable"
+    data_source_age_seconds: float | None = None
+    data_source_reason: str = "not_evaluated"
     provider_status: Literal["ok", "unavailable", "not_configured"]
     provider_debug: dict[str, Any] = Field(default_factory=dict)
     delta: float = 0
