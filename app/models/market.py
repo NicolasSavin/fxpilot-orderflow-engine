@@ -19,6 +19,13 @@ class BookLevel(BaseModel):
     ask_size: float = 0
 
 
+class OrderBookLevel(BaseModel):
+    price: float
+    bid_size: float = 0
+    ask_size: float = 0
+    level_index: int
+
+
 class Candle(BaseModel):
     symbol: str
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

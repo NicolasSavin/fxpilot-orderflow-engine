@@ -2,6 +2,8 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 from pydantic import BaseModel, Field
 
+from app.models.market import OrderBookLevel
+
 
 class VolumeProfileLevel(BaseModel):
     price: float
@@ -49,6 +51,23 @@ class CumDeltaResult(BaseModel):
     delta_momentum: Literal["strengthening", "weakening", "neutral"] = "neutral"
     divergence: Literal["bullish", "bearish", "none"] = "none"
     bias: Literal["bullish", "bearish", "neutral"] = "neutral"
+
+
+class DOMResult(BaseModel):
+    bid_total: float = 0
+    ask_total: float = 0
+    total_liquidity: float = 0
+    imbalance_ratio: float = 0
+    dom_pressure: Literal["bullish", "bearish", "neutral", "unavailable"] = "unavailable"
+    strongest_bid_level: OrderBookLevel | None = None
+    strongest_ask_level: OrderBookLevel | None = None
+    liquidity_above: float = 0
+    liquidity_below: float = 0
+    liquidity_wall_side: Literal["bid", "ask", "none"] = "none"
+    liquidity_wall_price: float | None = None
+    liquidity_wall_strength: float = 0
+    thin_liquidity_side: Literal["above", "below", "none"] = "none"
+    debug: dict[str, Any] = Field(default_factory=dict)
 
 
 class VWAPResult(BaseModel):
