@@ -12,6 +12,7 @@ def snapshot(*, provider="databento", status="ok", volume=10, timestamp=None, so
         provider=provider,
         provider_status=status,
         volume=volume,
+        orderflow_available=status == "ok",
         data_source=source,
     )
 
@@ -24,8 +25,8 @@ def test_databento_available_selected():
 
     assert decision.source == "databento"
     assert selected.data_source == "databento"
-    assert selected.data_source_label == "Databento CME"
-    assert selected.data_source_quality == 5
+    assert selected.data_source_label == "Databento"
+    assert selected.data_source_quality == 100
     assert selected.data_source_status == "ok"
 
 
@@ -37,7 +38,7 @@ def test_databento_unavailable_mt4_live_fresh_selected():
     decision = source_manager.choose(databento=db, mt4_live=mt4, now=now)
 
     assert decision.source == "mt4_live"
-    assert decision.reason == "mt4_live_snapshot_fresh"
+    assert decision.reason == "databento_unusable_mt4_live_fresh"
 
 
 def test_databento_unavailable_mt4_stale_cache_exists_selected():
@@ -49,7 +50,7 @@ def test_databento_unavailable_mt4_stale_cache_exists_selected():
     decision = source_manager.choose(databento=db, mt4_live=mt4, cache=cache, now=now)
 
     assert decision.source == "cache"
-    assert decision.reason == "cache_snapshot_available"
+    assert decision.reason == "databento_unusable_mt4_stale_or_missing_cache_available"
 
 
 def test_all_unavailable_returns_unavailable():
@@ -67,11 +68,11 @@ def test_all_unavailable_returns_unavailable():
 def test_source_metadata_included_in_snapshot():
     snap = snapshot(provider="mock", status="ok", volume=5)
 
-    selected = source_manager.apply_metadata(snap, "mt4_live", reason="mt4_live_snapshot_fresh", age_seconds=4.0)
+    selected = source_manager.apply_metadata(snap, "mt4_live", reason="databento_unusable_mt4_live_fresh", age_seconds=4.0)
 
     assert selected.data_source == "mt4_live"
-    assert selected.data_source_label == "MT4 Bridge"
-    assert selected.data_source_quality == 3
+    assert selected.data_source_label == "MT4 Live"
+    assert selected.data_source_quality == 75
     assert selected.data_source_status == "ok"
     assert selected.data_source_age_seconds == 4.0
-    assert selected.data_source_reason == "mt4_live_snapshot_fresh"
+    assert selected.data_source_reason == "databento_unusable_mt4_live_fresh"

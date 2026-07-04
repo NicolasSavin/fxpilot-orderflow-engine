@@ -1,43 +1,62 @@
 # OrderFlow Source Manager
 
-The OrderFlow Engine automatically selects the best available data source for each requested symbol without changing scoring, market-state, or AI logic.
+The OrderFlow Engine uses `SourceManager.select_best_snapshot(symbol)` to choose a single snapshot for the UI. Selection is automatic: the website does not need to switch providers manually.
 
-## Priority
+## Final Selection Priority
 
-Sources are evaluated in this order:
+Sources are always evaluated in this order:
 
-1. **Databento CME** (`databento`) when the Databento provider status is `ok` and the snapshot has `volume > 0`.
-2. **MT4 Bridge** (`mt4_live`) when a live snapshot exists and is no older than 30 seconds.
-3. **Historical Cache** (`cache`) when a cached snapshot exists and is no older than 15 minutes.
-4. **Unavailable** (`unavailable`) when no valid Databento, MT4 live, or cache snapshot exists.
+1. **Databento** (`databento`)
+2. **MT4 Live Bridge** (`mt4_live`)
+3. **Cached snapshot** (`cache`)
+4. **Unavailable** (`unavailable`)
 
-## Source Quality
+MT4 Live is strictly a fallback. If Databento returns a valid OrderFlow snapshot, MT4 must not override it, even if MT4 has a newer snapshot.
 
-Each `OrderFlowSnapshot` includes metadata that the website can use to show data provenance and confidence:
+## Valid Databento Snapshot
 
-| Source | Label | Quality |
-| --- | --- | ---: |
-| `databento` | `Databento CME` | 5 |
-| `mt4_live` | `MT4 Bridge` | 3 |
-| `cache` | `Historical Cache` | 1 |
-| `unavailable` | `Unavailable` | 0 |
+Databento is selected when all of the following are true:
 
-The metadata fields are:
+- `provider == "databento"`
+- `provider_status == "ok"`
+- `orderflow_available == true`
+- `volume > 0`
+
+If Databento is unavailable, not configured, missing subscription access, times out, raises an exception, returns `orderflow_available=false`, or returns no usable volume, the SourceManager automatically evaluates the MT4 Live Bridge.
+
+## MT4 Live Fallback
+
+MT4 Live is selected only when Databento is unusable and the in-memory MT4 snapshot is fresh. Freshness is configurable with:
+
+```env
+MT4_LIVE_FRESH_SECONDS=30
+```
+
+Successful `POST /api/orderflow/live` requests always update the in-memory live snapshot for the mapped futures symbol. That latest MT4 snapshot can then be selected by `GET /api/orderflow/latest` when Databento cannot provide usable OrderFlow.
+
+## Cache Fallback
+
+If Databento is unusable and MT4 is missing or stale, SourceManager falls back to the cached snapshot when one is available within the cache freshness window. Cached data is marked as `data_source="cache"` so consumers can distinguish it from primary or live fallback data.
+
+## Snapshot Metadata
+
+Every returned `OrderFlowSnapshot` includes provider-selection metadata:
 
 - `data_source`
 - `data_source_label`
 - `data_source_quality`
 - `data_source_status`
-- `data_source_age_seconds`
 - `data_source_reason`
+- `data_source_age_seconds`
 
-## Fallback Behavior
+| Source | `data_source` | Label | Quality |
+| --- | --- | --- | ---: |
+| Databento | `databento` | `Databento` | 100 |
+| MT4 Live Bridge | `mt4_live` | `MT4 Live` | 75 |
+| Cached snapshot | `cache` | `Cache` | 25 |
+| Unavailable | `unavailable` | `Unavailable` | 0 |
 
-`GET /api/orderflow/latest?symbol=EURUSD` first attempts the configured provider. A Databento result is selected only when it is healthy and has real volume. If Databento is unavailable, not configured, unlicensed for the requested data, or returns zero volume, the engine falls back to a fresh MT4 live snapshot. If MT4 live data is stale or missing, the engine falls back to the latest cache snapshot. If no source is available, the endpoint still returns a backward-compatible `OrderFlowSnapshot` with `data_source="unavailable"`.
-
-`POST /api/orderflow/live` stores the most recent MT4 Bridge snapshot per symbol. Subsequent `/api/orderflow/latest` calls will return that MT4 snapshot when Databento is not providing valid data and the live snapshot is fresh.
-
-## Debugging Source Selection
+## Diagnostics
 
 Use:
 
@@ -45,15 +64,27 @@ Use:
 GET /api/orderflow/source/status?symbol=EURUSD
 ```
 
-The response includes the active source, source-specific availability blocks for Databento, MT4 live, and cache, plus the decision reason.
+The response includes:
 
-## Website Display Guidance
+- `selected_source`
+- `databento_status`
+- `mt4_status`
+- `cache_status`
+- `last_mt4_update`
+- `last_databento_update`
+- `selection_reason`
 
-The website should display `data_source_label` near order-flow values and can use `data_source_quality` for visual severity:
+Backward-compatible aliases are also retained for older clients: `active_source`, `databento`, `mt4_live`, `cache`, and `decision_reason`.
 
-- Quality `5`: primary/healthy styling.
-- Quality `3`: live fallback styling.
-- Quality `1`: stale or historical fallback warning.
-- Quality `0`: unavailable/error state.
+## Endpoint Behavior
 
-For troubleshooting or tooltips, display `data_source_age_seconds` and `data_source_reason`.
+`GET /api/orderflow/latest` calls the Databento provider first, then delegates all selection to SourceManager:
+
+```text
+Databento valid -> return Databento snapshot
+Databento unusable + fresh MT4 -> return MT4 Live snapshot
+Databento unusable + stale/missing MT4 + cache -> return Cache snapshot
+No usable source -> return Unavailable snapshot
+```
+
+This keeps the UI simple: display `data_source_label` and use `data_source_quality`/`data_source_status` to style the result.

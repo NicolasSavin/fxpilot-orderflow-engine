@@ -207,8 +207,8 @@ def test_live_tick_ingestion_updates_latest_snapshot():
     assert latest_response.status_code == 200
     latest = latest_response.json()
     assert latest["data_source"] == "mt4_live"
-    assert latest["data_source_label"] == "MT4 Bridge"
-    assert latest["data_source_quality"] == 3
+    assert latest["data_source_label"] == "MT4 Live"
+    assert latest["data_source_quality"] == 75
     assert latest["symbol"] == "GBPUSD"
     assert latest["futures_symbol"] == "6B"
     assert latest["delta"] == 15
