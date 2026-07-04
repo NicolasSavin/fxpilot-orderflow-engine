@@ -3,6 +3,28 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
+class VolumeProfileLevel(BaseModel):
+    price: float
+    total_volume: float = 0
+    buy_volume: float = 0
+    sell_volume: float = 0
+    delta: float = 0
+    trades_count: int = 0
+
+
+class VolumeProfileResult(BaseModel):
+    profile_levels: list[VolumeProfileLevel] = Field(default_factory=list)
+    total_volume: float = 0
+    buy_volume: float = 0
+    sell_volume: float = 0
+    delta: float = 0
+    poc: float = 0
+    vah: float = 0
+    val: float = 0
+    hvn_levels: list[float] = Field(default_factory=list)
+    lvn_levels: list[float] = Field(default_factory=list)
+
+
 class OrderFlowSnapshot(BaseModel):
     symbol: str
     futures_symbol: str
