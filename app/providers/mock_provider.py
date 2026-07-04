@@ -30,8 +30,30 @@ class MockProvider(BaseMarketDataProvider):
         return [BookLevel(price=round(base + (i - 5) * tick, 10), bid_size=rng.randint(20, 180), ask_size=rng.randint(20, 180)) for i in range(10)]
 
     async def get_ohlcv(self, symbol: str, timeframe: str, start=None, end=None) -> list[dict]:
-        trades = await self.get_recent_trades(symbol, start, end)
-        return [{"timestamp": trades[0].timestamp, "open": trades[0].price, "high": max(t.price for t in trades), "low": min(t.price for t in trades), "close": trades[-1].price, "volume": sum(t.size for t in trades)}]
+        fut = to_futures_symbol(symbol)
+        rng = random.Random(f"ohlcv-{fut}")
+        base = BASE.get(fut, 1.0)
+        tick = TICK.get(fut, 0.0001)
+        now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+        candles = []
+        price = base
+        for i in range(20):
+            timestamp = now - timedelta(minutes=19 - i)
+            open_price = price
+            high_price = open_price + rng.randint(1, 8) * tick
+            low_price = open_price - rng.randint(1, 8) * tick
+            close_price = rng.choice([high_price, low_price, open_price + rng.randint(-3, 3) * tick])
+            price = close_price
+            volume = rng.randint(850, 1450)
+            candles.append({
+                "timestamp": timestamp,
+                "open": round(open_price, 10),
+                "high": round(max(high_price, open_price, close_price), 10),
+                "low": round(min(low_price, open_price, close_price), 10),
+                "close": round(close_price, 10),
+                "volume": volume,
+            })
+        return candles
 
     async def stream_trades(self, symbol: str) -> AsyncIterator[Trade]:
         for trade in await self.get_recent_trades(symbol):

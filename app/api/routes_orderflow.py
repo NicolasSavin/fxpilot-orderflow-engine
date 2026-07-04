@@ -3,7 +3,7 @@ from fastapi import APIRouter
 from app.models.market import BookLevel, Candle, Trade
 from app.models.orderflow import OrderFlowSnapshot
 from app.services.engine import engine
-from app.services.symbol_mapper import to_futures_symbol
+from app.services.symbol_mapper import supported_fx_symbols, to_futures_symbol
 from app.storage.memory_store import store
 
 router = APIRouter(prefix="/api/orderflow")
@@ -17,6 +17,10 @@ class IngestPayload(BaseModel):
 @router.get("/latest", response_model=OrderFlowSnapshot)
 async def latest(symbol: str = "EURUSD"):
     return await engine.latest(symbol)
+
+@router.get("/symbols")
+def symbols() -> list[str]:
+    return supported_fx_symbols()
 
 @router.post("/ingest")
 def ingest(payload: IngestPayload):

@@ -18,6 +18,16 @@ from app.services.symbol_mapper import supported_symbols, to_futures_symbol, to_
 from app.storage.memory_store import store
 
 
+def calculate_rvol(candles: list[Candle], current_volume: float) -> tuple[float, str | None]:
+    if len(candles) >= 2:
+        previous_volumes = [c.volume for c in candles[:-1] if c.volume > 0]
+        if previous_volumes:
+            average_volume = sum(previous_volumes) / len(previous_volumes)
+            if average_volume > 0:
+                return round(candles[-1].volume / average_volume, 4), None
+    return 0, "not_enough_history"
+
+
 def build_provider():
     return DatabentoProvider() if get_settings().orderflow_provider.lower() == "databento" else MockProvider()
 
@@ -43,14 +53,15 @@ class OrderFlowEngine:
         va = calculate_value_area(profile["volume_by_price"], settings.value_area_percent)
         dom = calculate_dom_pressure(book)
         absorption = calculate_absorption(candles, delta["delta"], profile["total_volume"])
+        rvol, rvol_reason = calculate_rvol(candles, profile["total_volume"])
         state = calculate_market_state(candles, delta["delta"], cumdelta, profile["total_volume"], va["vah"], va["val"])
         snapshot = OrderFlowSnapshot(
             symbol=fx, futures_symbol=futures, timestamp=datetime.now(timezone.utc), provider=self.provider.name, provider_status=status,
-            delta=delta["delta"], cumdelta=cumdelta, volume=profile["total_volume"], rvol=1.0 if profile["total_volume"] else 0,
+            delta=delta["delta"], cumdelta=cumdelta, volume=profile["total_volume"], rvol=rvol,
             vwap=calculate_vwap(trades), poc=profile["poc"], vah=va["vah"], val=va["val"], hvn_levels=va["hvn_levels"], lvn_levels=va["lvn_levels"],
             dom_pressure=dom["dom_pressure"], imbalance=dom["imbalance"], absorption=absorption, **state,
             orderflow_provider=self.provider.name, orderflow_available=status == "ok",
-            debug={"buy_volume": delta["buy_volume"], "sell_volume": delta["sell_volume"], "unknown_volume": delta["unknown_volume"], "profile_levels": len(profile["volume_by_price"])}
+            debug={"buy_volume": delta["buy_volume"], "sell_volume": delta["sell_volume"], "unknown_volume": delta["unknown_volume"], "profile_levels": len(profile["volume_by_price"]), "rvol_reason": rvol_reason}
         )
         store.last_update = snapshot.timestamp
         return snapshot
@@ -59,8 +70,16 @@ class OrderFlowEngine:
         return {"provider": self.provider.name, "symbols": supported_symbols(), "store_size": store.store_size, "last_update": store.last_update}
 
     def provider_status(self) -> dict:
+        settings = get_settings()
         databento = DatabentoProvider()
-        return {"provider": self.provider.name, "databento_configured": databento.configured, "live_enabled": False, "historical_enabled": False}
+        historical_enabled = False
+        return {
+            "provider": settings.orderflow_provider.lower(),
+            "databento_configured": databento.configured,
+            "live_enabled": False,
+            "historical_enabled": historical_enabled,
+            "historical_reason": "not_implemented",
+        }
 
 
 engine = OrderFlowEngine()
