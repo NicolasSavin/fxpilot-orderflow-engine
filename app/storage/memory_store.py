@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from app.models.market import BookLevel, Candle, Trade
-from app.models.orderflow import CumDeltaPoint
+from app.models.orderflow import CumDeltaPoint, OrderFlowSnapshot
 
 
 class MemoryStore:
@@ -12,6 +12,7 @@ class MemoryStore:
         self.books: dict[str, list[BookLevel]] = {}
         self.candles: dict[str, list[Candle]] = {}
         self.last_update: datetime | None = None
+        self.latest_snapshots: dict[str, OrderFlowSnapshot] = {}
 
     def reset_cumdelta_session(self, symbol: str) -> None:
         self.cumdelta[symbol] = 0
@@ -31,6 +32,13 @@ class MemoryStore:
         if candles:
             self.candles.setdefault(symbol, []).extend(candles)
         self.last_update = datetime.now(timezone.utc)
+
+    def set_latest_snapshot(self, symbol: str, snapshot: OrderFlowSnapshot) -> None:
+        self.latest_snapshots[symbol] = snapshot
+        self.last_update = snapshot.timestamp
+
+    def latest_snapshot(self, symbol: str) -> OrderFlowSnapshot | None:
+        return self.latest_snapshots.get(symbol)
 
     @property
     def store_size(self) -> int:
