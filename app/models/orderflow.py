@@ -53,6 +53,15 @@ class CumDeltaResult(BaseModel):
     bias: Literal["bullish", "bearish", "neutral"] = "neutral"
 
 
+class AbsorptionResult(BaseModel):
+    bullish_absorption: bool = False
+    bearish_absorption: bool = False
+    exhaustion: Literal["bullish", "bearish", "none", "unavailable"] = "none"
+    confidence: float = Field(default=0, ge=0, le=1)
+    reason: str = "no_signal"
+    debug: dict[str, Any] = Field(default_factory=dict)
+
+
 class DOMResult(BaseModel):
     bid_total: float = 0
     ask_total: float = 0
