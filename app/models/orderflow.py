@@ -92,6 +92,21 @@ class VWAPResult(BaseModel):
     bias: Literal["bullish", "bearish", "neutral"] = "neutral"
 
 
+class MarketStateResult(BaseModel):
+    market_state: Literal[
+        "accumulation", "distribution", "trend", "range", "expansion", "exhaustion", "unknown"
+    ] = "unknown"
+    trend_direction: Literal["bullish", "bearish", "neutral"] = "neutral"
+    trend_strength: Literal["strong", "moderate", "weak", "none"] = "none"
+    acceptance: Literal["inside_value_area", "above_value_area", "below_value_area", "unknown"] = "unknown"
+    rejection: Literal["rejected_upper_value", "rejected_lower_value", "none", "unknown"] = "unknown"
+    initiative_side: Literal["bullish", "bearish", "neutral"] = "neutral"
+    responsive_side: Literal["bullish", "bearish", "neutral"] = "neutral"
+    confidence: float = Field(default=0, ge=0, le=1)
+    reasons: list[str] = Field(default_factory=list)
+    debug: dict[str, Any] = Field(default_factory=dict)
+
+
 class OrderFlowSnapshot(BaseModel):
     symbol: str
     futures_symbol: str
@@ -112,7 +127,9 @@ class OrderFlowSnapshot(BaseModel):
     imbalance: float = 0
     absorption: Literal["bullish", "bearish", "none", "unavailable"] = "unavailable"
     exhaustion: Literal["bullish", "bearish", "none", "unavailable"] = "unavailable"
-    market_state: Literal["accumulation", "distribution", "trend", "range", "expansion", "exhaustion", "unknown"] = "unknown"
+    market_state: Literal[
+        "accumulation", "distribution", "trend", "range", "expansion", "exhaustion", "unknown"
+    ] = "unknown"
     orderflow_bias: Literal["bullish", "bearish", "neutral"] = "neutral"
     continuation_probability: float = 0
     reversal_probability: float = 0
