@@ -51,6 +51,19 @@ class CumDeltaResult(BaseModel):
     bias: Literal["bullish", "bearish", "neutral"] = "neutral"
 
 
+class VWAPResult(BaseModel):
+    symbol: str = ""
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    current_vwap: float = 0
+    session_vwap: float = 0
+    rolling_vwap: float = 0
+    anchored_vwap: float = 0
+    distance_to_vwap: float = 0
+    distance_percent: float = 0
+    price_position: Literal["above_vwap", "below_vwap", "at_vwap"] = "at_vwap"
+    bias: Literal["bullish", "bearish", "neutral"] = "neutral"
+
+
 class OrderFlowSnapshot(BaseModel):
     symbol: str
     futures_symbol: str
