@@ -54,10 +54,10 @@ def test_provider_status_reports_databento_configuration(monkeypatch):
     assert response.status_code == 200
     assert response.json() == {
         "provider": "databento",
-        "databento_configured": True,
-        "live_enabled": False,
-        "historical_enabled": False,
-        "historical_reason": "not_implemented",
+        "api_key_present": True,
+        "historical_supported": True,
+        "live_supported": False,
+        "status": "ok",
     }
 
 
