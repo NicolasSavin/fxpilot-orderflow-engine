@@ -112,3 +112,64 @@ def test_databento_failure_returns_unavailable(monkeypatch):
 
     assert asyncio.run(provider.get_recent_trades("EURUSD")) == []
     assert provider.status()["status"] == "unavailable"
+
+
+def test_debug_historical_connection_reports_trade_summary(monkeypatch):
+    monkeypatch.setenv("DATABENTO_API_KEY", "test-key")
+    monkeypatch.setattr(DatabentoProvider, "sdk_available", property(lambda self: True))
+    rows = [
+        {"ts_event": datetime(2026, 7, 1, 10, 0, tzinfo=timezone.utc), "price": 1_140_000_000, "size": 2, "side": "B"},
+        {"ts_event": datetime(2026, 7, 1, 10, 1, tzinfo=timezone.utc), "price": 1_145_000_000, "size": 3, "side": "A"},
+    ]
+    client = FakeClient(FakeDatabentoResponse(rows))
+    provider = DatabentoProvider(client=client)
+
+    result = asyncio.run(
+        provider.debug_historical_connection(
+            end=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    assert result["configured"] is True
+    assert result["sdk_available"] is True
+    assert result["connection"] == "ok"
+    assert result["dataset"] == "GLBX.MDP3"
+    assert result["symbols_supported"] == ["6E", "6B", "6J", "GC"]
+    assert result["historical_available"] is True
+    assert result["message"] == "Databento historical connection established."
+    assert result["trades"] == {
+        "count": 2,
+        "first_time": "2026-07-01T10:00:00Z",
+        "last_time": "2026-07-01T10:01:00Z",
+        "price_range": {"min": 1.14, "max": 1.145},
+        "total_volume": 5.0,
+    }
+    assert client.timeseries.calls[0]["dataset"] == "GLBX.MDP3"
+    assert client.timeseries.calls[0]["symbols"] == ["6E"]
+    assert client.timeseries.calls[0]["schema"] == "trades"
+
+
+def test_debug_historical_connection_reports_empty_window(monkeypatch):
+    monkeypatch.setenv("DATABENTO_API_KEY", "test-key")
+    monkeypatch.setattr(DatabentoProvider, "sdk_available", property(lambda self: True))
+    provider = DatabentoProvider(client=FakeClient(FakeDatabentoResponse([])))
+
+    result = asyncio.run(provider.debug_historical_connection())
+
+    assert result["connection"] == "ok"
+    assert result["historical_available"] is False
+    assert "no trades were returned" in result["message"]
+
+
+def test_debug_historical_connection_reports_missing_sdk(monkeypatch):
+    monkeypatch.setenv("DATABENTO_API_KEY", "test-key")
+    monkeypatch.setattr(DatabentoProvider, "sdk_available", property(lambda self: False))
+    provider = DatabentoProvider()
+
+    result = asyncio.run(provider.debug_historical_connection())
+
+    assert result["configured"] is True
+    assert result["sdk_available"] is False
+    assert result["connection"] == "sdk_unavailable"
+    assert result["historical_available"] is False
+    assert "databento package is not installed" in result["message"]

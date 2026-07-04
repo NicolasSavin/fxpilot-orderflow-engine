@@ -97,3 +97,35 @@ def test_symbols_returns_supported_fx_symbols():
 def test_rvol_without_history_returns_reason():
     candle = Candle(symbol="6E", open=1, high=1, low=1, close=1, volume=100)
     assert calculate_rvol([candle], 100) == (0, "not_enough_history")
+
+
+def test_databento_debug_endpoint(monkeypatch):
+    async def fake_debug(self, symbol="6E", *, lookback_hours=72, end=None):
+        return {
+            "configured": True,
+            "sdk_available": True,
+            "connection": "ok",
+            "dataset": "GLBX.MDP3",
+            "symbols_supported": ["6E", "6B", "6J", "GC"],
+            "historical_available": True,
+            "message": "Databento historical connection established.",
+            "symbol": symbol,
+            "lookback_hours": lookback_hours,
+        }
+
+    monkeypatch.setattr("app.providers.databento_provider.DatabentoProvider.debug_historical_connection", fake_debug)
+
+    response = client.get("/api/debug/databento?symbol=6E&lookback_hours=24")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "configured": True,
+        "sdk_available": True,
+        "connection": "ok",
+        "dataset": "GLBX.MDP3",
+        "symbols_supported": ["6E", "6B", "6J", "GC"],
+        "historical_available": True,
+        "message": "Databento historical connection established.",
+        "symbol": "6E",
+        "lookback_hours": 24,
+    }
