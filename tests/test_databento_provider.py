@@ -173,3 +173,66 @@ def test_debug_historical_connection_reports_missing_sdk(monkeypatch):
     assert result["connection"] == "sdk_unavailable"
     assert result["historical_available"] is False
     assert "databento package is not installed" in result["message"]
+
+
+class SequencedTimeseries:
+    def __init__(self, outcomes):
+        self.outcomes = list(outcomes)
+        self.calls = []
+
+    def get_range(self, **kwargs):
+        self.calls.append(kwargs)
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+class SequencedClient:
+    def __init__(self, outcomes):
+        self.timeseries = SequencedTimeseries(outcomes)
+
+
+def test_debug_historical_connection_retries_available_end(monkeypatch):
+    monkeypatch.setenv("DATABENTO_API_KEY", "test-key")
+    monkeypatch.setattr(DatabentoProvider, "sdk_available", property(lambda self: True))
+    rows = [{"ts_event": datetime(2026, 7, 1, 9, 59, tzinfo=timezone.utc), "price": 1_140_000_000, "size": 2, "side": "B"}]
+    client = SequencedClient([
+        RuntimeError("422 data_end_after_available_end available_end=2026-07-01T10:00:00Z"),
+        FakeDatabentoResponse(rows),
+    ])
+    provider = DatabentoProvider(client=client)
+
+    result = asyncio.run(
+        provider.debug_historical_connection(
+            lookback_hours=24,
+            end=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    assert result["connection"] == "ok"
+    assert result["historical_available"] is True
+    assert result["retry_used"] is True
+    assert result["actual_end"] == "2026-07-01T09:59:00Z"
+    assert result["actual_start"] == "2026-06-30T09:59:00Z"
+    assert len(client.timeseries.calls) == 2
+    assert client.timeseries.calls[0]["end"] == datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    assert client.timeseries.calls[1]["end"] == datetime(2026, 7, 1, 9, 59, tzinfo=timezone.utc)
+
+
+def test_debug_historical_connection_reports_actual_window_without_retry(monkeypatch):
+    monkeypatch.setenv("DATABENTO_API_KEY", "test-key")
+    monkeypatch.setattr(DatabentoProvider, "sdk_available", property(lambda self: True))
+    provider = DatabentoProvider(client=FakeClient(FakeDatabentoResponse([])))
+
+    result = asyncio.run(
+        provider.debug_historical_connection(
+            lookback_hours=2,
+            end=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    assert result["connection"] == "ok"
+    assert result["retry_used"] is False
+    assert result["actual_start"] == "2026-07-01T10:00:00Z"
+    assert result["actual_end"] == "2026-07-01T12:00:00Z"
