@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from threading import RLock
 from app.models.market import BookLevel, Candle, Trade
 from app.models.orderflow import CumDeltaPoint, OrderFlowSnapshot
 
@@ -15,6 +16,7 @@ class MemoryStore:
         self.latest_snapshots: dict[str, OrderFlowSnapshot] = {}
         self.live_snapshots: dict[str, OrderFlowSnapshot] = {}
         self.cache_snapshots: dict[str, OrderFlowSnapshot] = {}
+        self._snapshot_lock = RLock()
 
     def reset_cumdelta_session(self, symbol: str) -> None:
         self.cumdelta[symbol] = 0
@@ -36,26 +38,40 @@ class MemoryStore:
         self.last_update = datetime.now(timezone.utc)
 
     def set_latest_snapshot(self, symbol: str, snapshot: OrderFlowSnapshot) -> None:
-        self.latest_snapshots[symbol] = snapshot
-        self.last_update = snapshot.timestamp
+        with self._snapshot_lock:
+            self.latest_snapshots[symbol] = snapshot
+            self.last_update = snapshot.timestamp
 
     def latest_snapshot(self, symbol: str) -> OrderFlowSnapshot | None:
-        return self.latest_snapshots.get(symbol)
+        with self._snapshot_lock:
+            return self.latest_snapshots.get(symbol)
 
     def set_live_snapshot(self, symbol: str, snapshot: OrderFlowSnapshot) -> None:
-        self.live_snapshots[symbol] = snapshot
-        self.last_update = snapshot.timestamp
+        with self._snapshot_lock:
+            self.live_snapshots[symbol] = snapshot
+            self.last_update = snapshot.timestamp
 
     def live_snapshot(self, symbol: str) -> OrderFlowSnapshot | None:
-        return self.live_snapshots.get(symbol)
+        with self._snapshot_lock:
+            return self.live_snapshots.get(symbol)
 
     def set_cache_snapshot(self, symbol: str, snapshot: OrderFlowSnapshot) -> None:
-        self.cache_snapshots[symbol] = snapshot
-        self.latest_snapshots[symbol] = snapshot
-        self.last_update = snapshot.timestamp
+        with self._snapshot_lock:
+            self.cache_snapshots[symbol] = snapshot
+            self.latest_snapshots[symbol] = snapshot
+            self.last_update = snapshot.timestamp
 
     def cache_snapshot(self, symbol: str) -> OrderFlowSnapshot | None:
-        return self.cache_snapshots.get(symbol) or self.latest_snapshots.get(symbol)
+        with self._snapshot_lock:
+            return self.cache_snapshots.get(symbol) or self.latest_snapshots.get(symbol)
+
+    def set_mt4_live_snapshot(self, symbol: str, snapshot: OrderFlowSnapshot) -> None:
+        """Atomically publish a successful MT4 live snapshot everywhere it is consumed."""
+        with self._snapshot_lock:
+            self.latest_snapshots[symbol] = snapshot
+            self.live_snapshots[symbol] = snapshot
+            self.cache_snapshots[symbol] = snapshot
+            self.last_update = snapshot.timestamp
 
     @property
     def store_size(self) -> int:

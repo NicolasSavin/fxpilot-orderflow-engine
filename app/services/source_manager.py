@@ -89,6 +89,21 @@ class SourceManager:
 
         return SourceDecision("unavailable", None, self._unavailable_reason(databento, mt4_age, cache_age), None)
 
+
+    def newest_snapshot(self, *snapshots: OrderFlowSnapshot | None) -> OrderFlowSnapshot | None:
+        newest: OrderFlowSnapshot | None = None
+        for snapshot in snapshots:
+            if snapshot is None:
+                continue
+            if newest is None:
+                newest = snapshot
+                continue
+            current_ts = snapshot.timestamp if snapshot.timestamp.tzinfo else snapshot.timestamp.replace(tzinfo=timezone.utc)
+            newest_ts = newest.timestamp if newest.timestamp.tzinfo else newest.timestamp.replace(tzinfo=timezone.utc)
+            if current_ts > newest_ts:
+                newest = snapshot
+        return newest
+
     def select_best_snapshot(
         self,
         symbol: str,
@@ -98,10 +113,19 @@ class SourceManager:
     ) -> SourceDecision:
         """Select the best snapshot for a symbol using the global in-memory store."""
         futures = to_futures_symbol(symbol)
+        live_snapshot = store.live_snapshot(futures)
+        latest_snapshot = store.latest_snapshot(futures)
+        cache_snapshot = store.cache_snapshot(futures)
+        mt4_live = self.newest_snapshot(
+            live_snapshot if live_snapshot and live_snapshot.data_source == "mt4_live" else None,
+            latest_snapshot if latest_snapshot and latest_snapshot.data_source == "mt4_live" else None,
+            cache_snapshot if cache_snapshot and cache_snapshot.data_source == "mt4_live" else None,
+        )
+        cache = cache_snapshot if cache_snapshot is not mt4_live else None
         return self.choose(
             databento=databento_snapshot,
-            mt4_live=store.live_snapshot(futures),
-            cache=store.cache_snapshot(futures),
+            mt4_live=mt4_live,
+            cache=cache,
             now=now,
         )
 

@@ -71,6 +71,10 @@ class OrderFlowEngine:
 
     def ingest_live_tick(self, *, symbol: str, bid: float, ask: float, last: float, volume: float, timestamp: datetime) -> OrderFlowSnapshot:
         futures = to_futures_symbol(symbol)
+        server_received_at = datetime.now(timezone.utc)
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        timestamp = timestamp if timestamp >= server_received_at else server_received_at
         previous_trades = store.trades.get(futures, [])
         previous_price = previous_trades[-1].price if previous_trades else None
         side = "buy" if last >= ask else "sell" if last <= bid else "unknown"
@@ -89,9 +93,7 @@ class OrderFlowEngine:
             provider_debug={"provider": self.provider.name, "source": "live_mt4_bridge", "requested_symbol": symbol, "mapped_symbol": futures, "trades_loaded": len(store.trades.get(futures, [])), "calculators_executed": True},
         )
         snapshot = source_manager.apply_metadata(snapshot, "mt4_live", reason="mt4_live_snapshot_ingested", age_seconds=0)
-        store.set_latest_snapshot(futures, snapshot)
-        store.set_live_snapshot(futures, snapshot)
-        store.set_cache_snapshot(futures, snapshot)
+        store.set_mt4_live_snapshot(futures, snapshot)
         return snapshot
 
     async def latest(self, symbol: str) -> OrderFlowSnapshot:
@@ -156,7 +158,12 @@ class OrderFlowEngine:
         databento = store.cache_snapshot(futures)
         if databento is not None and databento.data_source != "databento":
             databento = None
-        live = store.live_snapshot(futures)
+        live = source_manager.newest_snapshot(
+            *(
+                snapshot if snapshot and snapshot.data_source == "mt4_live" else None
+                for snapshot in (store.live_snapshot(futures), store.latest_snapshot(futures), store.cache_snapshot(futures))
+            )
+        )
         cache = store.cache_snapshot(futures)
         decision = source_manager.select_best_snapshot(futures, databento)
         databento_status = source_manager.status_block(databento)
