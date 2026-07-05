@@ -220,3 +220,51 @@ def test_live_tick_ingestion_updates_latest_snapshot():
     assert latest["debug"]["profile_levels"] == 2
     assert "orderflow_bias" in latest
     assert "market_state" in latest
+
+
+def test_live_post_refreshes_source_status_with_current_mt4_timestamp():
+    from datetime import datetime, timezone
+    from app.storage.memory_store import store
+
+    for collection in [
+        store.trades,
+        store.books,
+        store.candles,
+        store.cumdelta,
+        store.cumdelta_points,
+        store.latest_snapshots,
+        store.live_snapshots,
+        store.cache_snapshots,
+    ]:
+        collection.pop("6J", None)
+    store.cumdelta_last_price.pop("6J", None)
+
+    stale_payload_timestamp = "2026-07-03T12:00:00Z"
+    before_post = datetime.now(timezone.utc)
+    live_response = client.post(
+        "/api/orderflow/live",
+        json={
+            "symbol": "USDJPY",
+            "bid": 160.00,
+            "ask": 160.02,
+            "last": 160.02,
+            "volume": 10,
+            "timestamp": stale_payload_timestamp,
+        },
+    )
+    status_response = client.get("/api/orderflow/source/status?symbol=USDJPY")
+    after_status = datetime.now(timezone.utc)
+
+    assert live_response.status_code == 200
+    assert status_response.status_code == 200
+    status = status_response.json()
+    mt4_status = status["mt4_status"]
+    last_mt4_update = datetime.fromisoformat(status["last_mt4_update"].replace("Z", "+00:00"))
+
+    assert status["selected_source"] == "mt4_live"
+    assert status["selection_reason"] == "databento_unusable_mt4_live_fresh"
+    assert mt4_status["fresh"] is True
+    assert mt4_status["age_seconds"] < 5
+    assert before_post <= last_mt4_update <= after_status
+    assert last_mt4_update.date() != datetime.fromisoformat(stale_payload_timestamp.replace("Z", "+00:00")).date()
+    assert live_response.json()["timestamp"] == status["last_mt4_update"]
