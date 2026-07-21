@@ -126,3 +126,160 @@ curl -X POST http://localhost:8010/api/orderflow/ingest \
   -H 'Content-Type: application/json' \
   -d '{"symbol":"EURUSD","trades":[{"symbol":"6E","price":1.145,"size":10,"side":"buy"}],"book":[{"price":1.145,"bid_size":100,"ask_size":80}],"candles":[{"symbol":"6E","open":1.144,"high":1.146,"low":1.143,"close":1.145,"volume":1000}]}'
 ```
+
+## Stage 2 — Historical Storage and Data Catalog
+
+FXPilot OrderFlow Engine now includes a historical-data storage subsystem for **historical and mock data only**. It does not implement Databento Live streaming and does not require a Databento Live subscription. Historical downloads are never automatic and may incur Databento costs when explicitly requested through protected OPS endpoints.
+
+### Architecture
+
+The subsystem lives in `app/services/historical_storage/`:
+
+- `models.py` defines `HistoricalDataset`, `HistoricalDownloadRequest`, `DatasetStatus`, local import requests, and the future `NormalizedTrade` contract.
+- `paths.py` owns Windows-compatible `pathlib.Path` directory management, safe component naming, path traversal rejection, and atomic text writes.
+- `catalog.py` persists `catalogs/historical_catalog.json` with atomic JSON writes and searchable dataset metadata.
+- `integrity.py` validates readable files, required trade columns, checksums, ordered timestamps, positive prices, non-negative sizes, symbols, duplicate trade IDs, duplicate sequences, and malformed rows.
+- `downloader.py` wraps providers behind an interface. `MockHistoricalProvider` is deterministic and offline. `DatabentoHistoricalProvider` uses historical APIs only and never starts live streaming.
+- `storage.py` coordinates idempotency, atomic generation/import, checksum calculation, quarantine, manifests, and catalog updates.
+
+### Storage directories
+
+Set the storage root with:
+
+```powershell
+$env:FXPILOT_ORDERFLOW_DATA_DIR = ".\data"
+```
+
+If unset, the service uses the Windows-compatible relative default `./data`. The service creates:
+
+```text
+data/
+  raw/
+  normalized/
+  catalogs/
+  manifests/
+  mock/
+  quarantine/
+```
+
+All paths are handled with `pathlib.Path`. Imports reject path traversal and files outside the configured data root unless an OPS caller explicitly enables `allow_outside_root` for a trusted local import.
+
+### Environment variables
+
+- `FXPILOT_ORDERFLOW_DATA_DIR` — storage root, default `./data`.
+- `FXPILOT_ORDERFLOW_OPS_TOKEN` — required for all mutating OPS endpoints. Send it in the `X-OPS-Token` header; never put tokens in URLs.
+- `DATABENTO_API_KEY` — required only for explicit Databento historical downloads. It is never returned by diagnostics or manifests.
+
+### Windows setup
+
+```powershell
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -e .
+uvicorn app.main:app --reload
+```
+
+Open:
+
+```text
+http://127.0.0.1:8000/health
+http://127.0.0.1:8000/ready
+```
+
+### Mock workflow
+
+Mock data is deterministic, offline, and clearly marked with `metadata.mock=true`. It contains timestamp, symbol, price, size, side, trade_id, and sequence fields and is never presented as real Databento data.
+
+```powershell
+$env:FXPILOT_ORDERFLOW_OPS_TOKEN = "change-me"
+$body = @{
+  provider = "mock"
+  dataset = "GLBX.MDP3"
+  schema = "trades"
+  symbols = @("6E.FUT")
+  start_at = "2026-01-01T00:00:00Z"
+  end_at = "2026-01-02T00:00:00Z"
+  encoding = "utf-8"
+  output_format = "parquet"
+  force = $false
+  metadata = @{ purpose = "local smoke test" }
+} | ConvertTo-Json -Depth 5
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/ops/historical/download -Headers @{"X-OPS-Token"="change-me"} -Body $body -ContentType "application/json"
+```
+
+Repeat the same request with `force=false` to receive the existing validated dataset rather than creating a duplicate file. `force=true` is allowed only through the protected OPS download endpoint and performs a controlled replacement using the same stable dataset ID.
+
+### Databento historical workflow
+
+Databento support is historical-only. The adapter uses `databento.Historical`, does not use live clients, and does not make requests on application startup.
+
+Always estimate first:
+
+```powershell
+$env:DATABENTO_API_KEY = "your-key"
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/ops/historical/estimate -Headers @{"X-OPS-Token"="change-me"} -Body $body -ContentType "application/json"
+```
+
+The estimate response reports provider, dataset, schema, symbols, start/end, requested duration, available size/cost information, warnings, and whether confirmation is required. The estimate endpoint never downloads data.
+
+### Local file import
+
+Protected local import accepts `.dbn`, `.dbn.zst`, `.csv`, and `.parquet`. Imports copy into canonical storage, validate integrity, fingerprint by checksum, catalog metadata, and preserve the original filename.
+
+```powershell
+$import = @{
+  file_path = ".\data\raw\fixture.csv"
+  provider = "local_file"
+  dataset = "local-fixtures"
+  schema = "trades"
+  symbol = "6E.FUT"
+  start_at = "2026-01-01T00:00:00Z"
+  end_at = "2026-01-02T00:00:00Z"
+  metadata = @{ source = "developer fixture" }
+} | ConvertTo-Json -Depth 5
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/ops/historical/import -Headers @{"X-OPS-Token"="change-me"} -Body $import -ContentType "application/json"
+```
+
+### Catalog and diagnostics API
+
+Public read-only endpoints:
+
+- `GET /health`
+- `GET /ready`
+- `GET /api/historical/datasets`
+- `GET /api/historical/datasets/{dataset_id}`
+- `GET /api/historical/catalog`
+- `GET /api/historical/debug`
+
+Protected OPS endpoints:
+
+- `POST /api/ops/historical/estimate`
+- `POST /api/ops/historical/download`
+- `POST /api/ops/historical/import`
+- `POST /api/ops/historical/validate/{dataset_id}`
+- `POST /api/ops/historical/rebuild-catalog`
+- `DELETE /api/ops/historical/datasets/{dataset_id}`
+
+### Integrity validation and quarantine
+
+Validation checks file presence, non-empty content, readable format, checksum consistency, required columns, timestamp parse/order status, positive prices, non-negative sizes, symbols, duplicate trade IDs, duplicate sequences, and malformed row counts. Invalid files are moved into `data/quarantine/` and are never silently deleted.
+
+Each cataloged dataset has a manifest at `data/manifests/{dataset_id}.json` containing the original request, file metadata, checksum, record count, validation results, warnings, errors, created time, and provider version when available. API keys are excluded.
+
+### Future Tick Parser contract
+
+`NormalizedTrade` documents the target normalized trade schema for later stages:
+
+- `event_time`
+- `receive_time`
+- `symbol`
+- `instrument_id`
+- `price`
+- `size`
+- `side`
+- `trade_id`
+- `sequence`
+- `source`
+- `flags`
+
+This PR intentionally does **not** implement Delta, Cumulative Delta, Volume Profile, POC, VAH, VAL, VWAP, Footprint, Imbalance, Absorption, Market State, or a complete Tick Parser.

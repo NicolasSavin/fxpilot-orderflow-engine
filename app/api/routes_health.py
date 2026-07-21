@@ -3,4 +3,4 @@ router = APIRouter()
 
 @router.get("/health")
 def health():
-    return {"status": "ok", "service": "fxpilot-orderflow-engine"}
+    return {"status": "healthy", "service": "fxpilot-orderflow-engine"}
