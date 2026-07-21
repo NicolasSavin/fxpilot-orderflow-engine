@@ -66,17 +66,28 @@ def _calculate_value_area(levels: list[VolumeProfileLevel], poc_index: int, perc
         elif down_volume is None:
             high += 1
             accumulated += up_volume
+        elif low == high == poc_index:
+            # Classic market-profile value-area expansion starts at the POC and
+            # expands to the nearest price level on both sides when both are
+            # available.  This preserves the historical 70% VAH/VAL contract by
+            # avoiding a one-sided value area when the first adjacent level alone
+            # reaches the target volume.
+            if up_volume >= down_volume:
+                high += 1
+                accumulated += up_volume
+                low -= 1
+                accumulated += down_volume
+            else:
+                low -= 1
+                accumulated += down_volume
+                high += 1
+                accumulated += up_volume
         elif up_volume >= down_volume:
             high += 1
             accumulated += up_volume
         else:
             low -= 1
             accumulated += down_volume
-
-    if low == poc_index and low > 0 and high > poc_index:
-        low -= 1
-    elif high == poc_index and high < len(levels) - 1 and low < poc_index:
-        high += 1
 
     return levels[high].price, levels[low].price
 
