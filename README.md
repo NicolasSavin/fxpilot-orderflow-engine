@@ -283,3 +283,72 @@ Each cataloged dataset has a manifest at `data/manifests/{dataset_id}.json` cont
 - `flags`
 
 This PR intentionally does **not** implement Delta, Cumulative Delta, Volume Profile, POC, VAH, VAL, VWAP, Footprint, Imbalance, Absorption, Market State, or a complete Tick Parser.
+
+## Stage 3 Historical Replay (Offline)
+
+The historical replay service opens datasets that are already present in the historical catalog and replays them through the existing OrderFlow engine. It does not start Databento Live, open streaming connections, or automatically download paid historical data.
+
+### Windows PowerShell quick start
+
+```powershell
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+pytest -q
+uvicorn app.main:app --reload --port 8010
+```
+
+### Mock dataset workflow
+
+1. Set an OPS token for protected mutations:
+
+```powershell
+$env:FXPILOT_ORDERFLOW_OPS_TOKEN="dev-token"
+```
+
+2. Generate a cataloged mock dataset by using the existing historical storage API:
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8010/api/ops/historical/download -Headers @{"X-OPS-Token"="dev-token"} -ContentType "application/json" -Body '{"provider":"mock","dataset":"offline","schema":"trades","symbols":["EURUSD"],"start_at":"2026-01-01T00:00:00Z","end_at":"2026-01-01T00:10:00Z","output_format":"csv","force":true}'
+```
+
+3. List catalog datasets:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8010/api/historical/datasets
+```
+
+4. Create a replay from a `dataset_id`:
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8010/api/ops/replays -Headers @{"X-OPS-Token"="dev-token"} -ContentType "application/json" -Body '{"dataset_id":"DATASET_ID","mode":"BATCH","reset_session":true,"persist_snapshots":true}'
+```
+
+5. Run a batch replay:
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8010/api/ops/replays/REPLAY_ID/start -Headers @{"X-OPS-Token"="dev-token"}
+```
+
+6. Run and resume step replay:
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8010/api/ops/replays/REPLAY_ID/step?rows=100 -Headers @{"X-OPS-Token"="dev-token"}
+Invoke-RestMethod -Method Post http://127.0.0.1:8010/api/ops/replays/REPLAY_ID/resume -Headers @{"X-OPS-Token"="dev-token"}
+```
+
+7. Inspect final state, result, and snapshots:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8010/api/replays/REPLAY_ID
+Invoke-RestMethod http://127.0.0.1:8010/api/replays/REPLAY_ID/result
+Invoke-RestMethod http://127.0.0.1:8010/api/replays/REPLAY_ID/snapshots
+```
+
+### Replay data policy
+
+Records are normalized with provider aliases such as `ts_event -> event_time`, `ts_recv -> receive_time`, `aggressor_side -> side`, `price -> price`, and `size -> size`. Replay ordering is deterministic by `(event_time, sequence, trade_id)`. Identical duplicate trades are detected by `(provider, instrument_id, sequence, trade_id, event_time)` and are not counted twice. Out-of-order rows inside the current replay selection are sorted before calculator execution; diagnostics report the number of out-of-order records observed.
+
+Aggressor side is never invented. If exchange aggressor side is missing, side remains `unknown`, normalization warnings include a proxy marker, and replay provenance sets `is_proxy=true` unless an exchange provider explicitly supplies real trade-side data.
+
+Broker tick volume and exchange volume are intentionally distinct. Databento trade datasets are labeled `exchange_trade_volume` with `is_exchange_volume=true`; MT4 or broker tick datasets are labeled `broker_tick_volume` and never presented as exchange volume. Mock datasets are labeled `data_quality=mock` and proxy.
