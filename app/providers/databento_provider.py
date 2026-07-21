@@ -249,8 +249,7 @@ class DatabentoProvider(BaseMarketDataProvider):
             trades = [self._trade_from_row(symbol, row) for row in rows]
             self.last_trades_loaded = len(trades)
             self.last_history_loaded = len(trades) > 0
-            if self.provider_status != "unavailable":
-                self.provider_status = "ok"
+            self.provider_status = "ok"
             return trades
         except Exception as exc:
             self.provider_status = "unavailable" if self.configured else "not_configured"
@@ -272,8 +271,7 @@ class DatabentoProvider(BaseMarketDataProvider):
         schema = f"ohlcv-{timeframe}"
         try:
             response, start, end, _ = await self._get_range_resolved(schema=schema, symbol=symbol, start=start, end=end)
-            if self.provider_status != "unavailable":
-                self.provider_status = "ok"
+            self.provider_status = "ok"
             return [self._candle_from_row(symbol, row) for row in self._records(response)]
         except Exception as exc:
             self.provider_status = "unavailable" if self.configured else "not_configured"

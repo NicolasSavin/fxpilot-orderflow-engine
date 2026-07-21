@@ -19,6 +19,10 @@ from app.services.symbol_mapper import supported_symbols, to_futures_symbol, to_
 from app.storage.memory_store import store
 
 
+def _format_utc_timestamp(timestamp: datetime) -> str:
+    return timestamp.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def calculate_rvol(candles: list[Candle], current_volume: float) -> tuple[float, str | None]:
     if len(candles) >= 2:
         previous_volumes = [c.volume for c in candles[:-1] if c.volume > 0]
@@ -117,8 +121,7 @@ class OrderFlowEngine:
         if not candles and trades:
             candles = [Candle(symbol=futures, timestamp=trades[-1].timestamp, open=trades[0].price, high=max(t.price for t in trades), low=min(t.price for t in trades), close=trades[-1].price, volume=sum(t.size for t in trades))]
         delta = calculate_delta(trades)
-        cumdelta = update_cumdelta(futures, delta["delta"])
-        profile = calculate_volume_profile(trades, get_settings().tick_size_for(futures))
+        update_cumdelta(futures, delta["delta"])
 
         if hasattr(self.provider, "diagnostic_snapshot"):
             provider_debug = self.provider.diagnostic_snapshot(symbol, futures, calculators_executed=True)
@@ -175,8 +178,8 @@ class OrderFlowEngine:
             "databento_status": databento_status,
             "mt4_status": mt4_status,
             "cache_status": cache_status,
-            "last_mt4_update": live.timestamp if live else None,
-            "last_databento_update": databento.timestamp if databento else None,
+            "last_mt4_update": _format_utc_timestamp(live.timestamp) if live else None,
+            "last_databento_update": _format_utc_timestamp(databento.timestamp) if databento else None,
             "selection_reason": decision.reason,
             # Backward-compatible aliases retained for existing clients.
             "active_source": decision.source,
