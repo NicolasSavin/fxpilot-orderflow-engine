@@ -73,6 +73,11 @@ def _calculate_value_area(levels: list[VolumeProfileLevel], poc_index: int, perc
             low -= 1
             accumulated += down_volume
 
+    if low == poc_index and low > 0 and high > poc_index:
+        low -= 1
+    elif high == poc_index and high < len(levels) - 1 and low < poc_index:
+        high += 1
+
     return levels[high].price, levels[low].price
 
 

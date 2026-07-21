@@ -78,10 +78,10 @@ def _divergence(points: list[CumDeltaPoint]) -> str:
     return "none"
 
 
-def _bias(current_delta: float, slope: str) -> str:
-    if slope == "rising" and current_delta > 0:
+def _bias(current_cumdelta: float, slope: str) -> str:
+    if slope == "rising" and current_cumdelta > 0:
         return "bullish"
-    if slope == "falling" and current_delta < 0:
+    if slope == "falling" and current_cumdelta < 0:
         return "bearish"
     return "neutral"
 
@@ -168,7 +168,7 @@ class CumDeltaEngine:
             delta_slope=slope,
             delta_momentum=_delta_momentum(points),
             divergence=_divergence(points),
-            bias=_bias(latest.delta, slope),
+            bias=_bias(latest.cumdelta, slope),
         )
 
 
