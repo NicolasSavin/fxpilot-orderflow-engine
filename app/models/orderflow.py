@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import Any, Literal
-from pydantic import BaseModel, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 from app.models.market import OrderBookLevel
 
@@ -107,10 +107,16 @@ class MarketStateResult(BaseModel):
     debug: dict[str, Any] = Field(default_factory=dict)
 
 
+def _format_utc_z(timestamp: datetime) -> str:
+    return timestamp.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 class OrderFlowSnapshot(BaseModel):
-    @field_serializer("timestamp", when_used="json")
+    model_config = ConfigDict(json_encoders={datetime: _format_utc_z})
+
+    @field_serializer("timestamp")
     def serialize_timestamp(self, timestamp: datetime) -> str:
-        return timestamp.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        return _format_utc_z(timestamp)
 
     symbol: str
     futures_symbol: str
