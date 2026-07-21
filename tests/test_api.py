@@ -11,7 +11,7 @@ client = TestClient(app)
 def test_api_health():
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "service": "fxpilot-orderflow-engine"}
+    assert response.json() == {"status": "healthy", "service": "fxpilot-orderflow-engine"}
 
 
 def test_latest_snapshot_returns_valid_schema():
