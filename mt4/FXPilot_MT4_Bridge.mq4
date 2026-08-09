@@ -13,6 +13,11 @@ input int HttpTimeoutMs = 10000;
 #define SYMBOL_COUNT 4
 #define TF_COUNT 5
 #define BTN_NAME "FXPILOT_SEND_NOW"
+#define PANEL_BG "FXPILOT_PANEL_BG"
+#define PANEL_TITLE "FXPILOT_PANEL_TITLE"
+#define PANEL_STATUS "FXPILOT_PANEL_STATUS"
+#define PANEL_COUNTERS "FXPILOT_PANEL_COUNTERS"
+#define PANEL_NEXT "FXPILOT_PANEL_NEXT"
 
 string CanonicalSymbols[SYMBOL_COUNT] = {"EURUSD","GBPUSD","USDJPY","XAUUSD"};
 string BrokerSymbols[SYMBOL_COUNT];
@@ -78,9 +83,50 @@ bool PostJson(string payload){
    return true;
 }
 
+void SetLabel(string name,string value,int x,int y,int size,color textColor){
+   if(ObjectFind(0,name)<0)ObjectCreate(0,name,OBJ_LABEL,0,0,0);
+   ObjectSetInteger(0,name,OBJPROP_CORNER,CORNER_LEFT_UPPER);
+   ObjectSetInteger(0,name,OBJPROP_XDISTANCE,x);
+   ObjectSetInteger(0,name,OBJPROP_YDISTANCE,y);
+   ObjectSetInteger(0,name,OBJPROP_FONTSIZE,size);
+   ObjectSetInteger(0,name,OBJPROP_COLOR,textColor);
+   ObjectSetString(0,name,OBJPROP_FONT,"Arial");
+   ObjectSetString(0,name,OBJPROP_TEXT,value);
+}
+
+void CreatePanel(){
+   ObjectDelete(0,PANEL_BG);
+   ObjectCreate(0,PANEL_BG,OBJ_RECTANGLE_LABEL,0,0,0);
+   ObjectSetInteger(0,PANEL_BG,OBJPROP_CORNER,CORNER_LEFT_UPPER);
+   ObjectSetInteger(0,PANEL_BG,OBJPROP_XDISTANCE,12);
+   ObjectSetInteger(0,PANEL_BG,OBJPROP_YDISTANCE,18);
+   ObjectSetInteger(0,PANEL_BG,OBJPROP_XSIZE,360);
+   ObjectSetInteger(0,PANEL_BG,OBJPROP_YSIZE,238);
+   ObjectSetInteger(0,PANEL_BG,OBJPROP_BGCOLOR,C'18,24,34');
+   ObjectSetInteger(0,PANEL_BG,OBJPROP_BORDER_COLOR,C'55,75,95');
+   ObjectSetInteger(0,PANEL_BG,OBJPROP_BACK,false);
+   ObjectSetInteger(0,PANEL_BG,OBJPROP_SELECTABLE,false);
+   SetLabel(PANEL_TITLE,"FXPILOT  |  MT4 BRIDGE v2",28,30,12,C'70,210,255');
+   SetLabel("FXPILOT_TFS","ONE CHART  |  M15  H1  H4  D1  W1",28,54,9,C'170,185,200');
+   SetLabel(PANEL_STATUS,"Status: starting",28,78,10,clrWhite);
+   for(int i=0;i<SYMBOL_COUNT;i++)SetLabel("FXPILOT_SYMBOL_"+IntegerToString(i),CanonicalSymbols[i],28,106+i*22,10,clrSilver);
+   SetLabel(PANEL_COUNTERS,"Packets: 0 OK / 0 failed",28,198,9,C'170,185,200');
+   SetLabel(PANEL_NEXT,"Next send: now",28,218,9,C'170,185,200');
+}
+
 void UpdatePanel(){
    string next=LastSendAt>0?TimeToString(LastSendAt+SendEverySeconds,TIME_SECONDS):"now";
-   Comment("FXPilot MT4 Bridge v2\n4 symbols | M15 H1 H4 D1 W1\n",LastStatus,"\nPackets OK/failed: ",OkPackets,"/",FailedPackets,"\nNext: ",next);
+   color statusColor=(FailedPackets==0?C'90,220,130':C'255,180,70');
+   SetLabel(PANEL_STATUS,"Status: "+LastStatus,28,78,10,statusColor);
+   for(int i=0;i<SYMBOL_COUNT;i++){
+      double bid=MarketInfo(BrokerSymbols[i],MODE_BID);
+      string quote=bid>0?DoubleToString(bid,(int)MarketInfo(BrokerSymbols[i],MODE_DIGITS)):"NO QUOTE";
+      string line=CanonicalSymbols[i]+"  ["+BrokerSymbols[i]+"]   "+quote+"   samples "+IntegerToString((int)Samples[i]);
+      SetLabel("FXPILOT_SYMBOL_"+IntegerToString(i),line,28,106+i*22,10,bid>0?C'100,230,150':C'255,100,100');
+   }
+   SetLabel(PANEL_COUNTERS,"Packets: "+IntegerToString(OkPackets)+" OK / "+IntegerToString(FailedPackets)+" failed",28,198,9,C'170,185,200');
+   SetLabel(PANEL_NEXT,"Next send: "+next,28,218,9,C'170,185,200');
+   ChartRedraw();
 }
 
 void SendAll(){
@@ -91,13 +137,25 @@ void SendAll(){
    for(int s=0;s<SYMBOL_COUNT;s++)ResetStats(s); UpdatePanel();
 }
 
-void CreateButton(){ ObjectDelete(0,BTN_NAME); ObjectCreate(0,BTN_NAME,OBJ_BUTTON,0,0,0); ObjectSetInteger(0,BTN_NAME,OBJPROP_CORNER,CORNER_RIGHT_UPPER); ObjectSetInteger(0,BTN_NAME,OBJPROP_XDISTANCE,12); ObjectSetInteger(0,BTN_NAME,OBJPROP_YDISTANCE,18); ObjectSetInteger(0,BTN_NAME,OBJPROP_XSIZE,140); ObjectSetInteger(0,BTN_NAME,OBJPROP_YSIZE,24); ObjectSetString(0,BTN_NAME,OBJPROP_TEXT,"Send FXPilot now"); }
+void CreateButton(){ ObjectDelete(0,BTN_NAME); ObjectCreate(0,BTN_NAME,OBJ_BUTTON,0,0,0); ObjectSetInteger(0,BTN_NAME,OBJPROP_CORNER,CORNER_LEFT_UPPER); ObjectSetInteger(0,BTN_NAME,OBJPROP_XDISTANCE,228); ObjectSetInteger(0,BTN_NAME,OBJPROP_YDISTANCE,214); ObjectSetInteger(0,BTN_NAME,OBJPROP_XSIZE,132); ObjectSetInteger(0,BTN_NAME,OBJPROP_YSIZE,28); ObjectSetInteger(0,BTN_NAME,OBJPROP_BGCOLOR,C'25,115,165'); ObjectSetInteger(0,BTN_NAME,OBJPROP_COLOR,clrWhite); ObjectSetString(0,BTN_NAME,OBJPROP_TEXT,"SEND NOW"); }
 
 int OnInit(){
-   string parsed[]; int count=StringSplit(BrokerSymbolsCsv,',',parsed); if(count!=SYMBOL_COUNT){Print("FXPilot: BrokerSymbolsCsv must contain exactly 4 symbols");return INIT_PARAMETERS_INCORRECT;}
-   for(int i=0;i<SYMBOL_COUNT;i++){BrokerSymbols[i]=Trim(parsed[i]);if(!SymbolSelect(BrokerSymbols[i],true))Print("FXPilot: check broker symbol ",BrokerSymbols[i]);ResetStats(i);}
-   EventSetTimer(1);CreateButton();SampleSymbols();LastStatus="Ready";UpdatePanel();if(SendOnStart)SendAll();return INIT_SUCCEEDED;
+   string parsed[]; int count=StringSplit(BrokerSymbolsCsv,',',parsed);
+   for(int i=0;i<SYMBOL_COUNT;i++){
+      BrokerSymbols[i]=(count==SYMBOL_COUNT?Trim(parsed[i]):CanonicalSymbols[i]);
+      if(!SymbolSelect(BrokerSymbols[i],true))Print("FXPilot: check broker symbol ",BrokerSymbols[i]);
+      ResetStats(i);
+   }
+   CreatePanel();CreateButton();EventSetTimer(1);SampleSymbols();
+   LastStatus=(count==SYMBOL_COUNT?"Ready":"Using default symbol names");UpdatePanel();
+   if(SendOnStart)SendAll();return INIT_SUCCEEDED;
 }
-void OnDeinit(const int reason){EventKillTimer();ObjectDelete(0,BTN_NAME);Comment("");}
+void OnDeinit(const int reason){
+   EventKillTimer();
+   string names[]={BTN_NAME,PANEL_BG,PANEL_TITLE,"FXPILOT_TFS",PANEL_STATUS,PANEL_COUNTERS,PANEL_NEXT,
+                   "FXPILOT_SYMBOL_0","FXPILOT_SYMBOL_1","FXPILOT_SYMBOL_2","FXPILOT_SYMBOL_3"};
+   for(int i=0;i<ArraySize(names);i++)ObjectDelete(0,names[i]);
+   Comment("");
+}
 void OnTimer(){SampleSymbols();if(LastSendAt==0 || TimeCurrent()-LastSendAt>=SendEverySeconds)SendAll();else UpdatePanel();}
 void OnChartEvent(const int id,const long &lparam,const double &dparam,const string &sparam){if(id==CHARTEVENT_OBJECT_CLICK && sparam==BTN_NAME){ObjectSetInteger(0,BTN_NAME,OBJPROP_STATE,false);SendAll();}}
