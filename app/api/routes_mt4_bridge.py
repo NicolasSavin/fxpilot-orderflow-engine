@@ -181,7 +181,7 @@ def ingest_mt4_batch(
     x_fxpilot_mt4_token: Annotated[str | None, Header()] = None,
 ) -> dict:
     _authenticate(x_fxpilot_mt4_token)
-    snapshot = _publish_snapshot(payload)
+    snapshot = _publish_snapshot(payload) if payload.timeframe == "M15" else None
     received_at = datetime.now(timezone.utc)
     stream_key = f"{payload.symbol}:{payload.timeframe}"
     with STORE_LOCK:
@@ -189,15 +189,38 @@ def ingest_mt4_batch(
         streams = registry.get("streams") if isinstance(registry.get("streams"), dict) else {}
         item = payload.model_dump()
         item["received_at"] = received_at.isoformat()
-        item["snapshot"] = snapshot.model_dump(mode="json")
+        if snapshot is not None:
+            item["snapshot"] = snapshot.model_dump(mode="json")
         streams[stream_key] = item
         _write_streams({"schema_version": "2.0", "updated_at": received_at.isoformat(), "streams": streams})
     return {
         "ok": True,
         "stream": stream_key,
         "candles_received": len(payload.candles),
-        "data_source": snapshot.data_source,
+        "data_source": snapshot.data_source if snapshot is not None else "mt4_multitimeframe",
+        "orderflow_snapshot_updated": snapshot is not None,
         "received_at": received_at.isoformat(),
+    }
+
+
+@router.get("/timeframes/{symbol}")
+def mt4_timeframes(symbol: str) -> dict:
+    normalized = symbol.upper().replace("/", "").replace("-", "").strip()
+    if normalized not in SUPPORTED_SYMBOLS:
+        raise HTTPException(status_code=404, detail="unsupported symbol")
+    registry = _read_streams()
+    streams = registry.get("streams") if isinstance(registry.get("streams"), dict) else {}
+    items = [
+        streams[key]
+        for timeframe in ("M15", "H1", "H4", "D1", "W1")
+        if (key := f"{normalized}:{timeframe}") in streams
+    ]
+    return {
+        "symbol": normalized,
+        "expected_timeframes": ["M15", "H1", "H4", "D1", "W1"],
+        "received_timeframes": [item.get("timeframe") for item in items],
+        "items": items,
+        "updated_at": registry.get("updated_at"),
     }
 
 
