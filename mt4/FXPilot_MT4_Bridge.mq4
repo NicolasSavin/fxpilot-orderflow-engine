@@ -1,10 +1,11 @@
 #property strict
-#property version "2.10"
+#property version "2.11"
 #property description "FXPilot: 4 symbols and 5 timeframes from one MT4 chart"
 
 input string ServerUrl = "https://fxpilot-orderflow-engine.onrender.com/api/mt4/batch";
 input string ApiToken = "";
 input string BrokerSymbolsCsv = "EURUSD,GBPUSD,USDJPY,XAUUSD";
+input bool AutoDetectBrokerSymbols = true;
 input int BarsToSend = 10;
 input int SendEverySeconds = 60;
 input bool SendOnStart = true;
@@ -32,6 +33,32 @@ string Trim(string value){ StringTrimLeft(value); StringTrimRight(value); return
 string TfName(int tf){ if(tf==PERIOD_M15)return "M15"; if(tf==PERIOD_H1)return "H1"; if(tf==PERIOD_H4)return "H4"; if(tf==PERIOD_D1)return "D1"; return "W1"; }
 string Num(double value,int digits){ return DoubleToString(value,digits); }
 string JsonEscape(string value){ StringReplace(value,"\\","\\\\"); StringReplace(value,"\"","\\\""); return value; }
+
+string FindBrokerSymbol(string canonical,string preferredSuffix){
+   string preferred=canonical+preferredSuffix;
+   if(SymbolSelect(preferred,true) && MarketInfo(preferred,MODE_POINT)>0)return preferred;
+   int total=SymbolsTotal(false);
+   for(int i=0;i<total;i++){
+      string candidate=SymbolName(i,false);
+      if(StringFind(candidate,canonical,0)==0 && SymbolSelect(candidate,true) && MarketInfo(candidate,MODE_POINT)>0)return candidate;
+   }
+   return preferred;
+}
+
+void ResolveBrokerSymbols(string &parsed[],int count){
+   string suffix="";
+   string chartSymbol=Symbol();
+   for(int i=0;i<SYMBOL_COUNT;i++){
+      if(StringFind(chartSymbol,CanonicalSymbols[i],0)==0){
+         suffix=StringSubstr(chartSymbol,StringLen(CanonicalSymbols[i]));
+         break;
+      }
+   }
+   for(int s=0;s<SYMBOL_COUNT;s++){
+      if(AutoDetectBrokerSymbols)BrokerSymbols[s]=FindBrokerSymbol(CanonicalSymbols[s],suffix);
+      else BrokerSymbols[s]=(count==SYMBOL_COUNT?Trim(parsed[s]):CanonicalSymbols[s]);
+   }
+}
 
 void ResetStats(int i){ Samples[i]=0; UpTicks[i]=0; DownTicks[i]=0; FlatTicks[i]=0; SpreadSum[i]=0; SpreadMax[i]=0; }
 
@@ -106,7 +133,7 @@ void CreatePanel(){
    ObjectSetInteger(0,PANEL_BG,OBJPROP_BORDER_COLOR,C'55,75,95');
    ObjectSetInteger(0,PANEL_BG,OBJPROP_BACK,false);
    ObjectSetInteger(0,PANEL_BG,OBJPROP_SELECTABLE,false);
-   SetLabel(PANEL_TITLE,"FXPILOT  |  MT4 BRIDGE v2.10",28,30,12,C'70,210,255');
+   SetLabel(PANEL_TITLE,"FXPILOT  |  MT4 BRIDGE v2.11",28,30,12,C'70,210,255');
    SetLabel("FXPILOT_TFS","ONE CHART  |  M15  H1  H4  D1  W1",28,54,9,C'170,185,200');
    SetLabel(PANEL_STATUS,"Status: starting",28,78,10,clrWhite);
    for(int i=0;i<SYMBOL_COUNT;i++)SetLabel("FXPILOT_SYMBOL_"+IntegerToString(i),CanonicalSymbols[i],28,106+i*22,10,clrSilver);
@@ -141,8 +168,8 @@ void CreateButton(){ ObjectDelete(0,BTN_NAME); ObjectCreate(0,BTN_NAME,OBJ_BUTTO
 
 int OnInit(){
    string parsed[]; int count=StringSplit(BrokerSymbolsCsv,',',parsed);
+   ResolveBrokerSymbols(parsed,count);
    for(int i=0;i<SYMBOL_COUNT;i++){
-      BrokerSymbols[i]=(count==SYMBOL_COUNT?Trim(parsed[i]):CanonicalSymbols[i]);
       if(!SymbolSelect(BrokerSymbols[i],true))Print("FXPilot: check broker symbol ",BrokerSymbols[i]);
       ResetStats(i);
    }
