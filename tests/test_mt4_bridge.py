@@ -80,3 +80,17 @@ def test_batch_rejects_unsupported_market(monkeypatch, tmp_path):
     data = payload()
     data["timeframe"] = "M1"
     assert client.post("/api/mt4/batch", json=data, headers={"X-FXPilot-MT4-Token": "secret"}).status_code == 422
+
+
+def test_higher_timeframe_is_stored_without_replacing_live_snapshot(monkeypatch, tmp_path):
+    client = make_client(monkeypatch, tmp_path)
+    data = payload()
+    data["timeframe"] = "H1"
+    response = client.post("/api/mt4/batch", json=data, headers={"X-FXPilot-MT4-Token": "secret"})
+    assert response.status_code == 200
+    assert response.json()["orderflow_snapshot_updated"] is False
+    assert store.live_snapshot("6E") is None
+
+    timeframes = client.get("/api/mt4/timeframes/EURUSD")
+    assert timeframes.status_code == 200
+    assert timeframes.json()["received_timeframes"] == ["H1"]
