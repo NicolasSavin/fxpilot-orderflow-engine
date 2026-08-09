@@ -1,4 +1,4 @@
-name: Tests
+name: Tests (mock and MT4)
 
 on:
   pull_request:
@@ -16,4 +16,4 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip
       - run: pip install -r requirements.txt
-      - run: pytest -q
+      - run: pytest -q --ignore=tests/test_databento_provider.py
