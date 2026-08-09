@@ -1,5 +1,5 @@
 #property strict
-#property version "2.00"
+#property version "2.10"
 #property description "FXPilot: 4 symbols and 5 timeframes from one MT4 chart"
 
 input string ServerUrl = "https://fxpilot-orderflow-engine.onrender.com/api/mt4/batch";
@@ -106,7 +106,7 @@ void CreatePanel(){
    ObjectSetInteger(0,PANEL_BG,OBJPROP_BORDER_COLOR,C'55,75,95');
    ObjectSetInteger(0,PANEL_BG,OBJPROP_BACK,false);
    ObjectSetInteger(0,PANEL_BG,OBJPROP_SELECTABLE,false);
-   SetLabel(PANEL_TITLE,"FXPILOT  |  MT4 BRIDGE v2",28,30,12,C'70,210,255');
+   SetLabel(PANEL_TITLE,"FXPILOT  |  MT4 BRIDGE v2.10",28,30,12,C'70,210,255');
    SetLabel("FXPILOT_TFS","ONE CHART  |  M15  H1  H4  D1  W1",28,54,9,C'170,185,200');
    SetLabel(PANEL_STATUS,"Status: starting",28,78,10,clrWhite);
    for(int i=0;i<SYMBOL_COUNT;i++)SetLabel("FXPILOT_SYMBOL_"+IntegerToString(i),CanonicalSymbols[i],28,106+i*22,10,clrSilver);
