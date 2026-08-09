@@ -94,3 +94,20 @@ def test_higher_timeframe_is_stored_without_replacing_live_snapshot(monkeypatch,
     timeframes = client.get("/api/mt4/timeframes/EURUSD")
     assert timeframes.status_code == 200
     assert timeframes.json()["received_timeframes"] == ["H1"]
+
+
+def test_batch_all_accepts_multiple_timeframes_in_one_request(monkeypatch, tmp_path):
+    client = make_client(monkeypatch, tmp_path)
+    m15 = payload()
+    h1 = payload()
+    h1["timeframe"] = "H1"
+    response = client.post(
+        "/api/mt4/batch-all",
+        json={"packets": [m15, h1]},
+        headers={"X-FXPilot-MT4-Token": "secret"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["packets_received"] == 2
+    assert body["streams"] == ["EURUSD:M15", "EURUSD:H1"]
