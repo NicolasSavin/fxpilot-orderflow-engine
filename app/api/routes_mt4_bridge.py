@@ -86,6 +86,10 @@ class MT4Batch(BaseModel):
         return normalized
 
 
+class MT4BatchEnvelope(BaseModel):
+    packets: list[MT4Batch] = Field(min_length=1, max_length=20)
+
+
 def _authenticate(token: str | None) -> None:
     expected = os.getenv("MT4_BRIDGE_TOKEN", "").strip()
     if not expected:
@@ -200,6 +204,24 @@ def ingest_mt4_batch(
         "data_source": snapshot.data_source if snapshot is not None else "mt4_multitimeframe",
         "orderflow_snapshot_updated": snapshot is not None,
         "received_at": received_at.isoformat(),
+    }
+
+
+@router.post("/batch-all")
+def ingest_mt4_batch_all(
+    payload: MT4BatchEnvelope,
+    x_fxpilot_mt4_token: Annotated[str | None, Header()] = None,
+) -> dict:
+    _authenticate(x_fxpilot_mt4_token)
+    results = []
+    for packet in payload.packets:
+        result = ingest_mt4_batch(packet, x_fxpilot_mt4_token)
+        results.append(result)
+    return {
+        "ok": all(bool(item.get("ok")) for item in results),
+        "packets_received": len(results),
+        "streams": [item.get("stream") for item in results],
+        "results": results,
     }
 
 
